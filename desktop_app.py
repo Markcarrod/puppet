@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import traceback
+import json
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -15,6 +16,7 @@ ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = ROOT / "output"
 NODE_SCRIPT = ROOT / "scripts" / "batchRender.js"
 DEBUG_LOG = ROOT / "desktop_debug.log"
+SETTINGS_FILE = ROOT / "desktop_settings.json"
 
 
 def write_debug(message):
@@ -50,6 +52,7 @@ class PinFactoryDesktop:
         self.concurrency = tk.StringVar(value="5")
         self.status_text = tk.StringVar(value="Ready")
 
+        self._load_settings()
         self._build_ui()
         self._log_environment()
         self.root.after(120, self._drain_log_queue)
@@ -204,16 +207,19 @@ class PinFactoryDesktop:
         folder = filedialog.askdirectory(title="Choose image folder")
         if folder:
             self.images_dir.set(folder)
+            self._save_settings()
 
     def pick_titles_file(self):
         file_path = filedialog.askopenfilename(title="Choose titles file", filetypes=[("Text files", "*.txt")])
         if file_path:
             self.titles_file.set(file_path)
+            self._save_settings()
 
     def pick_output_folder(self):
         folder = filedialog.askdirectory(title="Choose output folder")
         if folder:
             self.output_dir.set(folder)
+            self._save_settings()
 
     def start_render(self):
         if self.process and self.process.poll() is None:
@@ -234,6 +240,8 @@ class PinFactoryDesktop:
         except ValueError:
             messagebox.showerror("Invalid settings", "Variants, quality, and threads must be numbers.")
             return
+
+        self._save_settings()
 
         cmd = [
             "node",
@@ -335,16 +343,56 @@ class PinFactoryDesktop:
             f"PLATFORM: {platform.platform()}",
             f"TK_VERSION: {tk.TkVersion}",
             f"DEBUG_LOG: {DEBUG_LOG}",
+            f"SETTINGS_FILE: {SETTINGS_FILE}",
         ]
         for line in details:
             write_debug(line)
         self.log_queue.put("\n".join(details) + "\n\n")
+
+    def _load_settings(self):
+        if not SETTINGS_FILE.exists():
+            return
+
+        try:
+            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        except Exception as exc:
+            write_debug(f"Could not load settings: {exc}")
+            return
+
+        self.images_dir.set(data.get("images_dir", self.images_dir.get()))
+        self.titles_file.set(data.get("titles_file", self.titles_file.get()))
+        self.output_dir.set(data.get("output_dir", self.output_dir.get()))
+        self.template_mode.set(data.get("template_mode", self.template_mode.get()))
+        self.pin_size.set(data.get("pin_size", self.pin_size.get()))
+        self.output_format.set(data.get("output_format", self.output_format.get()))
+        self.quality.set(data.get("quality", self.quality.get()))
+        self.variants.set(data.get("variants", self.variants.get()))
+        self.concurrency.set(data.get("concurrency", self.concurrency.get()))
+
+    def _save_settings(self):
+        data = {
+            "images_dir": self.images_dir.get().strip(),
+            "titles_file": self.titles_file.get().strip(),
+            "output_dir": self.output_dir.get().strip(),
+            "template_mode": self.template_mode.get().strip(),
+            "pin_size": self.pin_size.get().strip(),
+            "output_format": self.output_format.get().strip(),
+            "quality": self.quality.get().strip(),
+            "variants": self.variants.get().strip(),
+            "concurrency": self.concurrency.get().strip(),
+        }
+
+        try:
+            SETTINGS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception as exc:
+            write_debug(f"Could not save settings: {exc}")
 
     def _on_close(self):
         if self.process and self.process.poll() is None:
             if not messagebox.askyesno("Quit", "A render is still running. Stop it and quit?"):
                 return
             self.process.terminate()
+        self._save_settings()
         self.root.destroy()
 
 
