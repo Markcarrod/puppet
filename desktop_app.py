@@ -1,8 +1,11 @@
 import os
+import platform
 import queue
+import shutil
 import subprocess
 import sys
 import threading
+import traceback
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -11,6 +14,18 @@ from tkinter import filedialog, messagebox, ttk
 ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = ROOT / "output"
 NODE_SCRIPT = ROOT / "scripts" / "batchRender.js"
+DEBUG_LOG = ROOT / "desktop_debug.log"
+
+
+def write_debug(message):
+    DEBUG_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with DEBUG_LOG.open("a", encoding="utf-8") as handle:
+        handle.write(message.rstrip() + "\n")
+
+
+def now_timestamp():
+    from datetime import datetime
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 class PinFactoryDesktop:
@@ -36,6 +51,7 @@ class PinFactoryDesktop:
         self.status_text = tk.StringVar(value="Ready")
 
         self._build_ui()
+        self._log_environment()
         self.root.after(120, self._drain_log_queue)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -231,7 +247,13 @@ class PinFactoryDesktop:
         self.log_text.delete("1.0", "end")
         self._append_log("Starting batch render...\n")
         self._append_log("Title bank format: Title:Description:Code -> image text uses Title, file saves as Code.ext\n")
+        self._append_log(f"Debug log: {DEBUG_LOG}\n")
         self._append_log(" ".join(cmd) + "\n\n")
+        write_debug(f"\n=== START {now_timestamp()} ===")
+        write_debug("COMMAND: " + " ".join(cmd))
+        write_debug(f"IMAGES_DIR: {self.images_dir.get().strip()}")
+        write_debug(f"TITLES_FILE: {self.titles_file.get().strip()}")
+        write_debug(f"OUTPUT_DIR: {self.output_dir.get().strip()}")
         self.status_text.set("Running")
         self.progress.start(10)
 
@@ -246,14 +268,20 @@ class PinFactoryDesktop:
                     bufsize=1,
                 )
                 for line in self.process.stdout:
+                    write_debug(line.rstrip())
                     self.log_queue.put(line)
                 code = self.process.wait()
+                write_debug(f"EXIT_CODE: {code}")
                 self.log_queue.put(f"\nFinished with exit code {code}\n")
                 self.log_queue.put(("__DONE__", code))
             except FileNotFoundError:
-                self.log_queue.put("Could not find `node` on PATH.\n")
+                msg = "Could not find `node` on PATH."
+                write_debug(msg)
+                self.log_queue.put(msg + "\n")
                 self.log_queue.put(("__DONE__", 1))
             except Exception as exc:
+                write_debug("Desktop runner error: " + str(exc))
+                write_debug(traceback.format_exc())
                 self.log_queue.put(f"Desktop runner error: {exc}\n")
                 self.log_queue.put(("__DONE__", 1))
 
@@ -272,6 +300,7 @@ class PinFactoryDesktop:
     def _append_log(self, text):
         self.log_text.insert("end", text)
         self.log_text.see("end")
+        write_debug(text)
 
     def _drain_log_queue(self):
         try:
@@ -286,6 +315,22 @@ class PinFactoryDesktop:
             pass
         self.root.after(120, self._drain_log_queue)
 
+    def _log_environment(self):
+        node_path = shutil.which("node")
+        python_path = sys.executable
+        details = [
+            f"=== APP START {now_timestamp()} ===",
+            f"ROOT: {ROOT}",
+            f"PYTHON: {python_path}",
+            f"NODE: {node_path or 'NOT FOUND'}",
+            f"PLATFORM: {platform.platform()}",
+            f"TK_VERSION: {tk.TkVersion}",
+            f"DEBUG_LOG: {DEBUG_LOG}",
+        ]
+        for line in details:
+            write_debug(line)
+        self.log_queue.put("\n".join(details) + "\n\n")
+
     def _on_close(self):
         if self.process and self.process.poll() is None:
             if not messagebox.askyesno("Quit", "A render is still running. Stop it and quit?"):
@@ -295,9 +340,15 @@ class PinFactoryDesktop:
 
 
 def main():
-    app = tk.Tk()
-    PinFactoryDesktop(app)
-    app.mainloop()
+    try:
+        write_debug(f"\n=== MAIN {now_timestamp()} ===")
+        app = tk.Tk()
+        PinFactoryDesktop(app)
+        app.mainloop()
+    except Exception as exc:
+        write_debug("Fatal desktop app error: " + str(exc))
+        write_debug(traceback.format_exc())
+        raise
 
 
 if __name__ == "__main__":
