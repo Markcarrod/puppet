@@ -154,13 +154,9 @@ async function renderPin(recipe, imagePath, outputPath, options = {}) {
 
   try {
     await page.setViewport({ width, height, deviceScaleFactor: 1 });
-    await page.setRequestInterception(true);
-
-    page.on('request', req => req.continue());
-
-    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
+    await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 15000 });
     await page.evaluateHandle('document.fonts.ready');
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise(r => setTimeout(r, 50));
 
     if (debug) {
       // In debug mode open in browser (non-headless won't work in CI but useful locally)

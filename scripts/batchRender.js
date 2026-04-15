@@ -22,6 +22,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { parseArgs } = require('./utils/cliArgs');
 const { loadBatchItems } = require('../utils/csvImporter');
 const { analyzeImage } = require('../utils/imageAnalyzer');
@@ -29,6 +30,15 @@ const { generateVariants } = require('../utils/variantGenerator');
 const { renderPin, closeBrowser } = require('../utils/renderer');
 
 const ROOT = path.join(__dirname, '..');
+
+process.on('unhandledRejection', err => {
+  console.error('\nUnhandled rejection:', err?.stack || err?.message || err);
+});
+
+process.on('uncaughtException', err => {
+  console.error('\nUncaught exception:', err?.stack || err?.message || err);
+  closeBrowser().finally(() => process.exit(1));
+});
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -95,6 +105,13 @@ async function main() {
     );
   }
 
+  function logSnapshot(reason) {
+    const mem = process.memoryUsage();
+    const rssMb = (mem.rss / 1024 / 1024).toFixed(0);
+    const heapMb = (mem.heapUsed / 1024 / 1024).toFixed(0);
+    console.log(`\n[Snapshot] ${reason} | rss=${rssMb}MB heap=${heapMb}MB cpu=${os.cpus().length}`);
+  }
+
   async function processItem(item) {
     const { imagePath, title, subtitle, cta, badge, linkLabel, category, outputCode } = item;
 
@@ -158,6 +175,9 @@ async function main() {
         rendered++;
         producedAnyOutput = true;
         printProgress(`${path.basename(result.outputPath)} - ${result.renderTime}ms`);
+        if (rendered % 25 === 0) {
+          logSnapshot(`${rendered} renders completed`);
+        }
       } catch (err) {
         failed++;
         console.warn(`\nRender failed for ${path.basename(imagePath)}: ${err.message}`);
