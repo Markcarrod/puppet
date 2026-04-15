@@ -10,7 +10,7 @@
  * Options:
  *   --input       Path to JSON or CSV batch file
  *   --folder      Path to folder of images
- *   --titles      Path to .txt file (one title per line)
+ *   --titles      Path to .txt file (one title per line, or Title:Description:Code)
  *   --template    Template ID or "auto" (default: auto)
  *   --size        Pin size: standard|tall|square_ish|square (default: standard)
  *   --format      Output format: jpg|png|webp (default: jpg)
@@ -73,7 +73,7 @@ async function main() {
   // Expand to render jobs
   const allJobs = [];
   for (const item of items) {
-    const { imagePath, title, subtitle, cta, badge, linkLabel, category } = item;
+    const { imagePath, title, subtitle, cta, badge, linkLabel, category, outputCode } = item;
 
     if (!fs.existsSync(imagePath)) {
       console.warn(`⚠  Skipping (not found): ${imagePath}`);
@@ -90,20 +90,25 @@ async function main() {
     }
 
     const inputs = { title, subtitle, cta, badge, linkLabel, category };
-    const variants = generateVariants(analysis, inputs, {
+    let variants = generateVariants(analysis, inputs, {
       maxVariants: parseInt(maxVariants),
       templateMode,
       pinSize,
     });
 
+    if (outputCode && variants.length > 1) {
+      variants = [variants[0]];
+    }
+
     const baseName = path.parse(imagePath).name;
     const sessionDir = path.join(outputDir, baseName);
 
     variants.forEach(recipe => {
+      const exactFilename = outputCode ? `${outputCode}.${format}` : `pin_${recipe.templateId}_${recipe.variantId}.${format}`;
       allJobs.push({
         recipe,
         imagePath,
-        outputPath: path.join(sessionDir, `pin_${recipe.templateId}_${recipe.variantId}.${format}`),
+        outputPath: path.join(sessionDir, exactFilename),
         options: { format, quality: parseInt(quality) },
       });
     });
@@ -152,20 +157,35 @@ function loadFolderItems(folderPath, titlesFilePath) {
     .filter(f => exts.includes(path.extname(f).toLowerCase()))
     .map(f => path.join(absFolder, f));
 
-  let titles = ['Untitled Pin'];
+  let titles = [{ title: 'Untitled Pin', outputCode: null }];
   if (titlesFilePath) {
     const absTitle = path.isAbsolute(titlesFilePath) ? titlesFilePath : path.join(ROOT, titlesFilePath);
     titles = fs.readFileSync(absTitle, 'utf8')
-      .split('\n')
+      .split(/\r?\n/)
       .map(t => t.trim())
-      .filter(Boolean);
+      .filter(Boolean)
+      .map(parseTitleBankLine);
   }
 
   const pairCount = Math.min(images.length, titles.length);
   return Array.from({ length: pairCount }, (_, i) => ({
     imagePath: images[i],
-    title: titles[i],
+    title: titles[i].title,
+    outputCode: titles[i].outputCode,
   }));
+}
+
+function parseTitleBankLine(line) {
+  const firstColon = line.indexOf(':');
+  const lastColon = line.lastIndexOf(':');
+
+  if (firstColon > 0 && lastColon > firstColon) {
+    const title = line.slice(0, firstColon).trim();
+    const outputCode = line.slice(lastColon + 1).trim();
+    return { title: title || 'Untitled Pin', outputCode: outputCode || null };
+  }
+
+  return { title: line.trim() || 'Untitled Pin', outputCode: null };
 }
 
 main().catch(err => {

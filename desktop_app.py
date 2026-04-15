@@ -64,7 +64,7 @@ class PinFactoryDesktop:
         ttk.Label(container, text="Pin Factory Desktop", style="Heading.TLabel").pack(anchor="w")
         ttk.Label(
             container,
-            text="Folder-based batch rendering with native pickers for images and title banks.",
+            text="Folder-based batch rendering with native pickers for images and title banks (Title:Description:Code supported).",
             style="Sub.TLabel",
         ).pack(anchor="w", pady=(2, 16))
 
@@ -230,6 +230,7 @@ class PinFactoryDesktop:
 
         self.log_text.delete("1.0", "end")
         self._append_log("Starting batch render...\n")
+        self._append_log("Title bank format: Title:Description:Code -> image text uses Title, file saves as Code.ext\n")
         self._append_log(" ".join(cmd) + "\n\n")
         self.status_text.set("Running")
         self.progress.start(10)
