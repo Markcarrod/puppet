@@ -70,11 +70,59 @@ function createJob(meta = {}) {
     total: 0,
     results: [],
     errors: [],
+    logs: [],
+    pauseRequested: false,
+    stopRequested: false,
     createdAt: new Date().toISOString(),
     ...meta,
   };
   jobs.set(id, job);
   return job;
+}
+
+function logJob(job, message) {
+  const entry = {
+    time: new Date().toISOString(),
+    message,
+  };
+  job.logs.push(entry);
+  if (job.logs.length > 200) job.logs.shift();
+}
+
+async function waitWhilePaused(job) {
+  while (job.pauseRequested && !job.stopRequested) {
+    if (job.status !== 'paused') {
+      job.status = 'paused';
+      logJob(job, 'Paused');
+    }
+    await new Promise(resolve => setTimeout(resolve, 400));
+  }
+}
+
+function getImageOutputs() {
+  const files = [];
+  if (!fs.existsSync(DIRS.output)) return files;
+
+  const sessions = fs.readdirSync(DIRS.output).filter(f =>
+    fs.statSync(path.join(DIRS.output, f)).isDirectory()
+  );
+
+  for (const session of sessions) {
+    const sessionPath = path.join(DIRS.output, session);
+    const pins = fs.readdirSync(sessionPath).filter(f => /\.(jpg|jpeg|png|webp)$/i.test(f));
+    for (const pin of pins) {
+      const outputPath = path.join(sessionPath, pin);
+      files.push({
+        session,
+        filename: pin,
+        outputPath,
+        url: `/output/${session}/${pin}`,
+        size: fs.statSync(outputPath).size,
+      });
+    }
+  }
+
+  return files.sort((a, b) => fs.statSync(b.outputPath).mtimeMs - fs.statSync(a.outputPath).mtimeMs);
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
@@ -176,6 +224,7 @@ app.post('/api/generate', async (req, res) => {
 
 async function runGenerateJob(job, imagePath, filename, opts) {
   job.status = 'analyzing';
+  logJob(job, `Analyzing ${filename}`);
 
   const analysis = await analyzeImage(imagePath);
   const variants = generateVariants(analysis, opts.inputs, {
@@ -186,6 +235,7 @@ async function runGenerateJob(job, imagePath, filename, opts) {
 
   job.total = variants.length;
   job.status = 'rendering';
+  logJob(job, `Rendering ${variants.length} variant${variants.length !== 1 ? 's' : ''} for ${filename}`);
 
   const baseName = path.parse(filename).name;
   const sessionDir = path.join(DIRS.output, baseName);
@@ -211,14 +261,17 @@ async function runGenerateJob(job, imagePath, filename, opts) {
           variant: result.variant,
           renderTime: result.renderTime,
         });
+        logJob(job, `Rendered ${actualFilename} and added it to Gallery`);
       } else if (error) {
         job.errors.push(error);
+        logJob(job, `Render error: ${error}`);
       }
     },
   });
 
   job.status = 'done';
   job.completedAt = new Date().toISOString();
+  logJob(job, `Job complete: ${job.results.length} pin${job.results.length !== 1 ? 's' : ''}`);
 }
 
 // Batch generate from JSON body
@@ -242,27 +295,56 @@ app.post('/api/batch', async (req, res) => {
 async function runBatchJob(job, items, opts) {
   job.status = 'running';
   job.total = items.length;
+  logJob(job, `Batch started with ${items.length} item${items.length !== 1 ? 's' : ''}`);
 
   for (const item of items) {
+    await waitWhilePaused(job);
+    if (job.stopRequested) {
+      job.status = 'stopped';
+      job.completedAt = new Date().toISOString();
+      logJob(job, 'Batch stopped by user');
+      return;
+    }
+
     const { filename, title, subtitle, cta, badge, linkLabel, category } = item;
-    if (!filename || !title) { job.errors.push(`Missing filename/title for item`); continue; }
+    if (!filename || !title) {
+      job.errors.push(`Missing filename/title for item`);
+      logJob(job, 'Skipped item with missing filename or title');
+      job.progress++;
+      continue;
+    }
 
     const imagePath = path.join(DIRS.uploads, filename);
-    if (!fs.existsSync(imagePath)) { job.errors.push(`Not found: ${filename}`); continue; }
+    if (!fs.existsSync(imagePath)) {
+      job.errors.push(`Not found: ${filename}`);
+      logJob(job, `Missing upload: ${filename}`);
+      job.progress++;
+      continue;
+    }
 
     const subJob = createJob({ parent: job.id });
-    await runGenerateJob(subJob, imagePath, filename, {
-      inputs: { title, subtitle, cta, badge, linkLabel, category },
-      ...opts,
-    });
+    try {
+      logJob(job, `Analyzing and rendering ${filename}`);
+      await runGenerateJob(subJob, imagePath, filename, {
+        inputs: { title, subtitle, cta, badge, linkLabel, category },
+        ...opts,
+      });
 
-    job.results.push(...subJob.results);
-    job.errors.push(...subJob.errors);
-    job.progress++;
+      job.results.push(...subJob.results);
+      job.errors.push(...subJob.errors);
+      logJob(job, `Moved ${subJob.results.length} rendered pin${subJob.results.length !== 1 ? 's' : ''} from ${filename} into Gallery`);
+    } catch (err) {
+      job.errors.push(err.message);
+      logJob(job, `Batch item failed for ${filename}: ${err.message}`);
+    } finally {
+      job.progress++;
+      jobs.delete(subJob.id);
+    }
   }
 
   job.status = 'done';
   job.completedAt = new Date().toISOString();
+  logJob(job, `Batch complete: ${job.results.length} pin${job.results.length !== 1 ? 's' : ''}`);
 }
 
 // Job status polling
@@ -270,6 +352,42 @@ app.get('/api/jobs/:id', (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: 'Job not found' });
   res.json(job);
+});
+
+// Pause/resume/stop an active job. Batch jobs apply the control between images.
+app.post('/api/jobs/:id/pause', (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  if (['done', 'error', 'stopped'].includes(job.status)) {
+    return res.status(400).json({ error: 'Job is already finished' });
+  }
+  job.pauseRequested = true;
+  logJob(job, 'Pause requested');
+  res.json({ ok: true, status: job.status });
+});
+
+app.post('/api/jobs/:id/resume', (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  if (['done', 'error', 'stopped'].includes(job.status)) {
+    return res.status(400).json({ error: 'Job is already finished' });
+  }
+  job.pauseRequested = false;
+  if (job.status === 'paused') job.status = 'running';
+  logJob(job, 'Resumed');
+  res.json({ ok: true, status: job.status });
+});
+
+app.post('/api/jobs/:id/stop', (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  if (['done', 'error', 'stopped'].includes(job.status)) {
+    return res.status(400).json({ error: 'Job is already finished' });
+  }
+  job.stopRequested = true;
+  job.pauseRequested = false;
+  logJob(job, 'Stop requested');
+  res.json({ ok: true, status: job.status });
 });
 
 // List all jobs
@@ -292,7 +410,7 @@ app.get('/api/jobs', (req, res) => {
 app.get('/api/jobs/:id/download', async (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: 'Job not found' });
-  if (job.status !== 'done') return res.status(400).json({ error: 'Job not complete' });
+  if (!['done', 'stopped'].includes(job.status)) return res.status(400).json({ error: 'Job not complete' });
 
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', `attachment; filename="pins_${req.params.id.slice(0, 8)}.zip"`);
@@ -311,23 +429,26 @@ app.get('/api/jobs/:id/download', async (req, res) => {
 
 // List output files
 app.get('/api/outputs', (req, res) => {
-  const sessions = fs.readdirSync(DIRS.output).filter(f =>
-    fs.statSync(path.join(DIRS.output, f)).isDirectory()
-  );
-  const files = [];
-  for (const session of sessions) {
-    const sessionPath = path.join(DIRS.output, session);
-    const pins = fs.readdirSync(sessionPath).filter(f => /\.(jpg|jpeg|png|webp)$/i.test(f));
-    for (const pin of pins) {
-      files.push({
-        session,
-        filename: pin,
-        url: `/output/${session}/${pin}`,
-        size: fs.statSync(path.join(sessionPath, pin)).size,
-      });
-    }
-  }
+  const files = getImageOutputs().map(({ outputPath, ...file }) => file);
   res.json({ files });
+});
+
+// Download every gallery image as one ZIP.
+app.get('/api/outputs/download', async (req, res) => {
+  const files = getImageOutputs();
+  if (files.length === 0) return res.status(404).json({ error: 'No gallery images found' });
+
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="gallery_pins_${new Date().toISOString().slice(0, 10)}.zip"`);
+
+  const archive = archiver('zip', { zlib: { level: 6 } });
+  archive.pipe(res);
+
+  for (const file of files) {
+    archive.file(file.outputPath, { name: path.posix.join(file.session, file.filename) });
+  }
+
+  await archive.finalize();
 });
 
 // Delete uploaded image

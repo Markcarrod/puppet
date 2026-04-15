@@ -88,11 +88,17 @@ const els = {
   batchProgressCount: $('batch-progress-count'),
   batchProgressFill: $('batch-progress-fill'),
   batchPinsGrid: $('batch-pins-grid'),
+  batchLog: $('batch-log'),
+  btnBatchPause: $('btn-batch-pause'),
+  btnBatchResume: $('btn-batch-resume'),
+  btnBatchStop: $('btn-batch-stop'),
+  btnBatchDownload: $('btn-batch-download'),
   // Gallery
   galleryGrid: $('gallery-grid'),
   galleryCount: $('gallery-count'),
   galleryEmpty: $('gallery-empty'),
   btnRefreshGallery: $('btn-refresh-gallery'),
+  btnDownloadGallery: $('btn-download-gallery'),
   // Jobs
   jobsList: $('jobs-list'),
   jobsEmpty: $('jobs-empty'),
@@ -451,6 +457,7 @@ async function startRenderJob() {
         if (job.results.length === 0) {
           showToast('No pins were generated — check console for errors', 'error');
         }
+        loadGallery();
       },
       onError: (msg) => {
         showProgress(false);
@@ -470,7 +477,7 @@ async function startRenderJob() {
 }
 
 // ─── Job Polling ──────────────────────────────────────────────────────────────
-const TERMINAL = ['done', 'error'];
+const TERMINAL = ['done', 'error', 'stopped'];
 
 function pollJob(jobId, callbacks) {
   let lastResultCount = 0;
@@ -489,6 +496,9 @@ function pollJob(jobId, callbacks) {
       if (job.status === 'done') {
         clearInterval(interval);
         callbacks.onDone?.(job);
+      } else if (job.status === 'stopped') {
+        clearInterval(interval);
+        callbacks.onStopped?.(job);
       } else if (job.status === 'error') {
         clearInterval(interval);
         callbacks.onError?.(job.error || 'Unknown error');
@@ -509,6 +519,10 @@ function pollJob(jobId, callbacks) {
   }, 1200);
 
   return interval;
+}
+
+async function controlJob(jobId, action) {
+  return api('POST', `/api/jobs/${jobId}/${action}`);
 }
 
 // ─── Progress Bar ─────────────────────────────────────────────────────────────
@@ -662,6 +676,48 @@ function updateBatchTitleMeta() {
   els.batchTitleCount.textContent = `${count} title${count !== 1 ? 's' : ''} loaded`;
 }
 
+function renderBatchLogs(logs = []) {
+  els.batchLog.innerHTML = '';
+  logs.slice(-80).forEach(entry => {
+    const line = document.createElement('div');
+    line.className = 'batch-log-line';
+    line.innerHTML = `
+      <span class="batch-log-time">${formatTime(entry.time)}</span>
+      <span>${entry.message}</span>`;
+    els.batchLog.appendChild(line);
+  });
+  els.batchLog.scrollTop = els.batchLog.scrollHeight;
+}
+
+function setBatchControlState(job) {
+  const isActive = job && !TERMINAL.includes(job.status);
+  const isPaused = job?.status === 'paused' || job?.pauseRequested;
+  els.btnBatchPause.disabled = !isActive || isPaused;
+  els.btnBatchResume.disabled = !isActive || !isPaused;
+  els.btnBatchStop.disabled = !isActive;
+  els.btnBatchDownload.style.display = job?.results?.length && TERMINAL.includes(job.status) ? '' : 'none';
+  if (job?.id) els.btnBatchDownload.href = `/api/jobs/${job.id}/download`;
+}
+
+function resetBatchControls() {
+  setBatchControlState(null);
+  els.btnBatchDownload.style.display = 'none';
+}
+
+async function sendBatchControl(action) {
+  if (!state.batchJobId) return;
+  try {
+    await controlJob(state.batchJobId, action);
+    showToast(`Batch ${action} requested`, 'info');
+  } catch (err) {
+    showToast(`Could not ${action} batch: ${err.message}`, 'error');
+  }
+}
+
+els.btnBatchPause.addEventListener('click', () => sendBatchControl('pause'));
+els.btnBatchResume.addEventListener('click', () => sendBatchControl('resume'));
+els.btnBatchStop.addEventListener('click', () => sendBatchControl('stop'));
+
 els.btnBatchRender.addEventListener('click', async () => {
   const titles = els.batchTitles.value.trim().split('\n').map(t => t.trim()).filter(Boolean);
   if (!titles.length || !state.batchFiles.length) return;
@@ -680,7 +736,9 @@ els.btnBatchRender.addEventListener('click', async () => {
   els.btnBatchRender.textContent = 'Starting batch…';
   els.batchStatus.style.display = 'flex';
   els.batchPinsGrid.innerHTML = '';
+  els.batchLog.innerHTML = '';
   els.batchProgressFill.style.width = '0%';
+  resetBatchControls();
 
   try {
     const res = await api('POST', '/api/batch', {
@@ -693,41 +751,61 @@ els.btnBatchRender.addEventListener('click', async () => {
 
     state.batchJobId = res.jobId;
     let lastCount = 0;
+    setBatchControlState({ id: res.jobId, status: 'running', results: [] });
 
     pollJob(res.jobId, {
       onProgress: (job) => {
-        els.batchStatusLabel.textContent = `Processing ${job.progress} / ${job.total}…`;
+        const statusLabel = job.status === 'paused' ? 'Paused' : 'Processing';
+        els.batchStatusLabel.textContent = `${statusLabel} ${job.progress} / ${job.total}...`;
         els.batchProgressCount.textContent = `${job.progress} / ${job.total}`;
         const pct = job.total > 0 ? Math.round((job.progress / job.total) * 100) : 0;
         els.batchProgressFill.style.width = `${pct}%`;
+        renderBatchLogs(job.logs);
+        setBatchControlState(job);
 
         if (job.results.length > lastCount) {
+          const newResults = job.results.slice(lastCount);
           lastCount = job.results.length;
-          job.results.slice(lastCount).forEach(r => {
+          newResults.forEach(r => {
             els.batchPinsGrid.appendChild(createPinCard(r, res.jobId));
           });
+          loadGallery();
         }
       },
       onDone: (job) => {
-        els.batchStatusLabel.textContent = `✓ Batch complete — ${job.results.length} pins rendered`;
+        els.batchStatusLabel.textContent = `Batch complete - ${job.results.length} pins rendered`;
         els.batchProgressFill.style.width = '100%';
-        // Render all
+        renderBatchLogs(job.logs);
+        setBatchControlState(job);
         els.batchPinsGrid.innerHTML = '';
         job.results.forEach(r => els.batchPinsGrid.appendChild(createPinCard(r, res.jobId)));
         els.btnBatchRender.disabled = false;
-        els.btnBatchRender.textContent = '▶ Start Batch Render';
+        els.btnBatchRender.textContent = 'Start Batch Render';
+        loadGallery();
+      },
+      onStopped: (job) => {
+        els.batchStatusLabel.textContent = `Stopped - ${job.results.length} pins kept in Gallery`;
+        renderBatchLogs(job.logs);
+        setBatchControlState(job);
+        els.batchPinsGrid.innerHTML = '';
+        job.results.forEach(r => els.batchPinsGrid.appendChild(createPinCard(r, res.jobId)));
+        els.btnBatchRender.disabled = false;
+        els.btnBatchRender.textContent = 'Start Batch Render';
+        loadGallery();
       },
       onError: (msg) => {
-        els.batchStatusLabel.textContent = `✗ Error: ${msg}`;
+        els.batchStatusLabel.textContent = `Error: ${msg}`;
+        resetBatchControls();
         els.btnBatchRender.disabled = false;
-        els.btnBatchRender.textContent = '▶ Start Batch Render';
+        els.btnBatchRender.textContent = 'Start Batch Render';
         showToast(`Batch error: ${msg}`, 'error');
       },
     });
   } catch (err) {
     showToast(`Failed to start batch: ${err.message}`, 'error');
+    resetBatchControls();
     els.btnBatchRender.disabled = false;
-    els.btnBatchRender.textContent = '▶ Start Batch Render';
+    els.btnBatchRender.textContent = 'Start Batch Render';
   }
 });
 
@@ -742,10 +820,12 @@ async function loadGallery() {
       els.galleryGrid.style.display = 'none';
       els.galleryEmpty.style.display = 'flex';
       els.galleryCount.textContent = '';
+      els.btnDownloadGallery.style.display = 'none';
     } else {
       els.galleryGrid.style.display = 'grid';
       els.galleryEmpty.style.display = 'none';
       els.galleryCount.textContent = `${data.files.length} pins`;
+      els.btnDownloadGallery.style.display = '';
       data.files.forEach(f => {
         const card = document.createElement('div');
         card.className = 'pin-card';
@@ -793,7 +873,7 @@ async function loadJobs() {
             <div class="job-count">${job.resultCount} pin${job.resultCount !== 1 ? 's' : ''}</div>
           </div>
           <span class="job-time">${formatTime(job.createdAt)}</span>
-          ${job.status === 'done' && job.resultCount > 0
+          ${['done', 'stopped'].includes(job.status) && job.resultCount > 0
             ? `<a class="job-dl-link" href="/api/jobs/${job.id}/download">↓ Download ZIP</a>`
             : ''}`;
         els.jobsList.appendChild(item);

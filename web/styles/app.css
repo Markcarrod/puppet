@@ -463,6 +463,13 @@ body {
 }
 .btn-ghost:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-strong); }
 
+.btn-danger {
+  background: var(--red-bg);
+  color: var(--red);
+  border: 1px solid rgba(239,68,68,0.35);
+}
+.btn-danger:hover:not(:disabled) { background: rgba(239,68,68,0.18); border-color: var(--red); }
+
 .btn-sm { padding: 6px 12px; font-size: 12.5px; }
 .btn-full { width: 100%; }
 
@@ -822,6 +829,36 @@ body {
   text-overflow: ellipsis;
 }
 
+.batch-control-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.batch-log {
+  max-height: 150px;
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.batch-log-line {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.batch-log-time {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
 /* ══════════════════════════════════════
    GALLERY & JOBS TAB
 ══════════════════════════════════════ */
@@ -864,8 +901,9 @@ body {
 
 .job-status-badge.done { background: var(--green-bg); color: var(--green); }
 .job-status-badge.rendering, .job-status-badge.running { background: var(--accent-surface); color: var(--accent-light); }
-.job-status-badge.error { background: var(--red-bg); color: var(--red); }
+.job-status-badge.error, .job-status-badge.stopped { background: var(--red-bg); color: var(--red); }
 .job-status-badge.pending, .job-status-badge.analyzing { background: rgba(234,179,8,0.1); color: var(--yellow); }
+.job-status-badge.paused { background: rgba(234,179,8,0.1); color: var(--yellow); }
 
 .job-info { flex: 1; min-width: 0; }
 .job-id { font-size: 11px; color: var(--text-muted); font-family: monospace; }
