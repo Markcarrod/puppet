@@ -40,7 +40,6 @@ class PinFactoryDesktop:
 
         self.log_queue = queue.Queue()
         self.process = None
-        self.stop_requested = False
 
         self.images_dir = tk.StringVar()
         self.titles_file = tk.StringVar()
@@ -271,7 +270,6 @@ class PinFactoryDesktop:
         write_debug(f"TITLES_FILE: {self.titles_file.get().strip()}")
         write_debug(f"OUTPUT_DIR: {self.output_dir.get().strip()}")
         self.status_text.set("Running")
-        self.stop_requested = False
         self.progress.start(10)
 
         def worker():
@@ -291,12 +289,8 @@ class PinFactoryDesktop:
                     self.log_queue.put(line)
                 code = self.process.wait()
                 write_debug(f"EXIT_CODE: {code}")
-                if self.stop_requested:
-                    self.log_queue.put("\nStopped by user.\n")
-                    self.log_queue.put(("__STOPPED__", code))
-                else:
-                    self.log_queue.put(f"\nFinished with exit code {code}\n")
-                    self.log_queue.put(("__DONE__", code))
+                self.log_queue.put(f"\nFinished with exit code {code}\n")
+                self.log_queue.put(("__DONE__", code))
             except FileNotFoundError:
                 msg = "Could not find `node` on PATH."
                 write_debug(msg)
@@ -312,7 +306,6 @@ class PinFactoryDesktop:
 
     def stop_render(self):
         if self.process and self.process.poll() is None:
-            self.stop_requested = True
             self.process.terminate()
             self._append_log("\nStopping process...\n")
 
@@ -333,9 +326,6 @@ class PinFactoryDesktop:
                 if isinstance(item, tuple) and item[0] == "__DONE__":
                     self.progress.stop()
                     self.status_text.set("Done" if item[1] == 0 else "Failed")
-                elif isinstance(item, tuple) and item[0] == "__STOPPED__":
-                    self.progress.stop()
-                    self.status_text.set("Stopped")
                 else:
                     self._append_log(item)
         except queue.Empty:
