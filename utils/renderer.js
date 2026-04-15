@@ -98,8 +98,9 @@ function imageToDataUrl(imagePath) {
 
 // ─── Metadata Sidecar ─────────────────────────────────────────────────────────
 
-function writeSidecar(outputPath, recipe, renderTime, warnings) {
-  const sidecarPath = outputPath.replace(/\.[^.]+$/, '.meta.json');
+function writeSidecar(outputPath, recipe, renderTime, warnings, metaOutputPath) {
+  const sidecarPath = metaOutputPath || outputPath.replace(/\.[^.]+$/, '.meta.json');
+  const sidecarDir = path.dirname(sidecarPath);
   const meta = {
     generatedAt:   new Date().toISOString(),
     templateId:    recipe.templateId,
@@ -131,6 +132,7 @@ function writeSidecar(outputPath, recipe, renderTime, warnings) {
     outputFile: path.basename(outputPath),
   };
   try {
+    if (!fs.existsSync(sidecarDir)) fs.mkdirSync(sidecarDir, { recursive: true });
     fs.writeFileSync(sidecarPath, JSON.stringify(meta, null, 2));
   } catch (e) {
     console.warn('[Renderer] Could not write sidecar:', e.message);
@@ -141,7 +143,7 @@ function writeSidecar(outputPath, recipe, renderTime, warnings) {
 
 async function renderPin(recipe, imagePath, outputPath, options = {}) {
   const startTime = Date.now();
-  const { format = 'webp', quality = 88, sharpen = false, debug = false } = options;
+  const { format = 'webp', quality = 88, sharpen = false, debug = false, metaOutputPath } = options;
 
   const imageDataUrl = imageToDataUrl(imagePath);
   const html = buildPinHTML(recipe, imageDataUrl);
@@ -189,7 +191,7 @@ async function renderPin(recipe, imagePath, outputPath, options = {}) {
     const warnings   = [];
 
     // Write sidecar JSON
-    writeSidecar(outputPath, recipe, renderTime, warnings);
+    writeSidecar(outputPath, recipe, renderTime, warnings, metaOutputPath);
 
     console.log(`[Renderer] ✓ ${path.basename(outputPath)} (${renderTime}ms)`);
 

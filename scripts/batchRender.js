@@ -81,6 +81,7 @@ async function main() {
   let skipped = 0;
   let nextIndex = 0;
   let producedAnyOutput = false;
+  let lastTemplateId = null;
 
   const startTime = Date.now();
   const totalItems = items.length;
@@ -131,19 +132,28 @@ async function main() {
     }
 
     const baseName = path.parse(imagePath).name;
-    const sessionDir = path.join(outputDir, baseName);
+    const jsonDir = path.join(outputDir, 'json');
+    const selectedVariants = applyTemplateRotation(variants, templateMode, lastTemplateId);
 
-    for (const recipe of variants) {
+    for (const recipe of selectedVariants) {
+      lastTemplateId = recipe.templateId;
       const exactFilename = outputCode
         ? `${outputCode}.${outputFormat}`
-        : `pin_${recipe.templateId}_${recipe.variantId}.${outputFormat}`;
+        : `${baseName}_${recipe.templateId}_${slugify(recipe.variantId)}.${outputFormat}`;
+      const metaFilename = outputCode
+        ? `${outputCode}.json`
+        : `${baseName}_${recipe.templateId}_${slugify(recipe.variantId)}.json`;
 
       try {
         const result = await renderPin(
           recipe,
           imagePath,
-          path.join(sessionDir, exactFilename),
-          { format: outputFormat, quality: outputQuality }
+          path.join(outputDir, exactFilename),
+          {
+            format: outputFormat,
+            quality: outputQuality,
+            metaOutputPath: path.join(jsonDir, metaFilename),
+          }
         );
         rendered++;
         producedAnyOutput = true;
@@ -221,6 +231,26 @@ function parseTitleBankLine(line) {
   }
 
   return { title: line.trim() || 'Untitled Pin', outputCode: null };
+}
+
+function applyTemplateRotation(variants, templateMode, previousTemplateId) {
+  if (templateMode !== 'auto' || variants.length <= 1 || !previousTemplateId) {
+    return variants;
+  }
+
+  const preferredIndex = variants.findIndex(recipe => recipe.templateId !== previousTemplateId);
+  if (preferredIndex <= 0) {
+    return variants;
+  }
+
+  return [variants[preferredIndex], ...variants.slice(0, preferredIndex), ...variants.slice(preferredIndex + 1)];
+}
+
+function slugify(value) {
+  return String(value)
+    .replace(/[^a-z0-9]+/gi, '-')
+    .replace(/^-|-$/g, '')
+    .toLowerCase() || 'variant';
 }
 
 main().catch(err => {
