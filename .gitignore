@@ -1,0 +1,10 @@
+node_modules/
+output/
+uploads/
+.env
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc

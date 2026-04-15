@@ -1,0 +1,39 @@
+[
+  {
+    "imagePath": "my-desk-scene.jpg",
+    "title": "10 Morning Habits of Highly Productive People",
+    "subtitle": "Start your day with intention and build real momentum",
+    "category": "PRODUCTIVITY",
+    "cta": "Read More",
+    "badge": "NEW",
+    "linkLabel": "yourblog.com/morning-habits"
+  },
+  {
+    "imagePath": "marble-background.jpg",
+    "title": "The Capsule Wardrobe Formula That Works for Every Season",
+    "subtitle": "50 pieces. Infinite outfits. Zero decision fatigue.",
+    "category": "STYLE",
+    "cta": "See the Guide"
+  },
+  {
+    "imagePath": "linen-texture.jpg",
+    "title": "How to Build a $10k/Month Blog From Scratch in 2025",
+    "subtitle": "No audience. No experience. Just a clear strategy.",
+    "category": "BLOGGING",
+    "cta": "Get Started",
+    "badge": "FREE GUIDE"
+  },
+  {
+    "imagePath": "laptop-workspace.jpg",
+    "title": "The Minimalist Home Office Setup That Changes Everything",
+    "subtitle": "Less clutter. More focus. Better work.",
+    "category": "WORKSPACE"
+  },
+  {
+    "imagePath": "dark-luxury.jpg",
+    "title": "7 Luxury Skincare Ingredients Worth Every Penny",
+    "subtitle": "Backed by dermatologists. Loved by editors.",
+    "category": "BEAUTY",
+    "cta": "Shop Now"
+  }
+]

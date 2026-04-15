@@ -1,0 +1,28 @@
+{
+  "name": "puppeteer-pinterest-factory",
+  "version": "1.0.0",
+  "description": "Premium Pinterest Pin Rendering System — Puppeteer + Sharp",
+  "main": "server.js",
+  "scripts": {
+    "start":    "node server.js",
+    "dev":      "nodemon server.js",
+    "batch":    "node scripts/batchRender.js",
+    "debug":    "node scripts/debugRender.js",
+    "watch":    "node scripts/debugRender.js --watch",
+    "previews": "node scripts/generatePreviews.js"
+  },
+  "dependencies": {
+    "archiver":   "^6.0.1",
+    "cors":       "^2.8.5",
+    "csv-parse":  "^5.5.3",
+    "express":    "^4.18.2",
+    "morgan":     "^1.10.0",
+    "multer":     "^1.4.5-lts.1",
+    "puppeteer":  "^21.6.1",
+    "sharp":      "^0.33.1",
+    "uuid":       "^9.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}
