@@ -47,7 +47,7 @@ class PinFactoryDesktop:
         self.output_format = tk.StringVar(value="jpg")
         self.quality = tk.StringVar(value="88")
         self.variants = tk.StringVar(value="1")
-        self.concurrency = tk.StringVar(value="3")
+        self.concurrency = tk.StringVar(value="5")
         self.status_text = tk.StringVar(value="Ready")
 
         self._build_ui()
@@ -80,7 +80,7 @@ class PinFactoryDesktop:
         ttk.Label(container, text="Pin Factory Desktop", style="Heading.TLabel").pack(anchor="w")
         ttk.Label(
             container,
-            text="Folder-based batch rendering with native pickers for images and title banks (Title:Description:Code supported).",
+            text="Folder-based batch rendering with native pickers, render-as-you-go workers, and title banks (Title:Description:Code supported).",
             style="Sub.TLabel",
         ).pack(anchor="w", pady=(2, 16))
 
@@ -140,7 +140,12 @@ class PinFactoryDesktop:
         self._field(card, 2, 0, "Format", ttk.Combobox(card, textvariable=self.output_format, values=["jpg", "png", "webp"], state="readonly"))
         self._field(card, 2, 2, "Quality", self._entry(card, self.quality))
         self._field(card, 3, 0, "Variants", self._entry(card, self.variants))
-        self._field(card, 3, 2, "Concurrency", self._entry(card, self.concurrency))
+        self._field(card, 3, 2, "Threads", self._entry(card, self.concurrency))
+        ttk.Label(
+            card,
+            text="Threads control how many images are analyzed and rendered at the same time.",
+            style="Meta.TLabel",
+        ).grid(row=4, column=0, columnspan=4, sticky="w", pady=(4, 0))
 
         for col in (1, 3):
             card.columnconfigure(col, weight=1)
@@ -225,9 +230,9 @@ class PinFactoryDesktop:
         try:
             variants = max(1, int(self.variants.get().strip() or "1"))
             quality = min(100, max(60, int(self.quality.get().strip() or "88")))
-            concurrency = max(1, int(self.concurrency.get().strip() or "3"))
+            concurrency = max(1, int(self.concurrency.get().strip() or "5"))
         except ValueError:
-            messagebox.showerror("Invalid settings", "Variants, quality, and concurrency must be numbers.")
+            messagebox.showerror("Invalid settings", "Variants, quality, and threads must be numbers.")
             return
 
         cmd = [
@@ -246,6 +251,7 @@ class PinFactoryDesktop:
 
         self.log_text.delete("1.0", "end")
         self._append_log("Starting batch render...\n")
+        self._append_log(f"Render mode: analyze -> render immediately with {concurrency} threads\n")
         self._append_log("Title bank format: Title:Description:Code -> image text uses Title, file saves as Code.ext\n")
         self._append_log(f"Debug log: {DEBUG_LOG}\n")
         self._append_log(" ".join(cmd) + "\n\n")

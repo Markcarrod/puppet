@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Batch Render Script — CLI
+ * Batch Render Script - CLI
  *
  * Usage:
  *   node scripts/batchRender.js --input data/batch.json [options]
@@ -16,7 +16,7 @@
  *   --format      Output format: jpg|png|webp (default: jpg)
  *   --quality     Output quality 60-100 (default: 88)
  *   --variants    Variants per image (default: 4)
- *   --concurrency Parallel renders (default: 3)
+ *   --concurrency Parallel workers / threads (default: 3)
  *   --output      Output directory (default: output/)
  */
 
@@ -26,7 +26,7 @@ const { parseArgs } = require('./utils/cliArgs');
 const { loadBatchItems } = require('../utils/csvImporter');
 const { analyzeImage } = require('../utils/imageAnalyzer');
 const { generateVariants } = require('../utils/variantGenerator');
-const { renderBatch, closeBrowser } = require('../utils/renderer');
+const { renderPin, closeBrowser } = require('../utils/renderer');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -46,52 +46,82 @@ async function main() {
     output: outputDir = path.join(ROOT, 'output'),
   } = args;
 
-  console.log('\n🎨 Pinterest Pin Factory — Batch CLI\n');
+  console.log('\nPinterest Pin Factory - Batch CLI\n');
 
-  // Load batch items
   let items = [];
   if (input) {
-    console.log(`📂 Loading batch file: ${input}`);
+    console.log(`Loading batch file: ${input}`);
     items = await loadBatchItems(input);
   } else if (folder) {
-    console.log(`📂 Scanning folder: ${folder}`);
+    console.log(`Scanning folder: ${folder}`);
     items = loadFolderItems(folder, titlesFile);
   } else {
-    console.error('❌ Provide --input <file> or --folder <dir>');
+    console.error('Provide --input <file> or --folder <dir>');
     process.exit(1);
   }
 
   if (items.length === 0) {
-    console.error('❌ No items to render');
+    console.error('No items to render');
     process.exit(1);
   }
 
-  console.log(`✓ Loaded ${items.length} items`);
-  console.log(`⚙  Template: ${templateMode} | Size: ${pinSize} | Format: ${format} | Quality: ${quality}`);
-  console.log(`⚙  Variants per item: ${maxVariants} | Concurrency: ${concurrency}\n`);
+  const workerCount = Math.max(1, parseInt(concurrency, 10) || 1);
+  const variantCount = Math.max(1, parseInt(maxVariants, 10) || 1);
+  const outputFormat = String(format).toLowerCase();
+  const outputQuality = parseInt(quality, 10);
 
-  // Expand to render jobs
-  const allJobs = [];
-  for (const item of items) {
+  console.log(`Loaded ${items.length} items`);
+  console.log(`Template: ${templateMode} | Size: ${pinSize} | Format: ${outputFormat} | Quality: ${outputQuality}`);
+  console.log(`Variants per item: ${variantCount} | Threads: ${workerCount}`);
+  console.log(`Mode: analyze -> render immediately\n`);
+
+  let analyzed = 0;
+  let rendered = 0;
+  let failed = 0;
+  let skipped = 0;
+  let nextIndex = 0;
+  let producedAnyOutput = false;
+
+  const startTime = Date.now();
+  const totalItems = items.length;
+
+  function printProgress(extra = '') {
+    const processed = analyzed + skipped;
+    const pct = totalItems ? Math.round((processed / totalItems) * 100) : 100;
+    const suffix = extra ? ` | ${extra}` : '';
+    process.stdout.write(
+      `\rAnalyzed ${analyzed}/${totalItems} | Rendered ${rendered} | Failed ${failed} | Skipped ${skipped} | ${pct}%${suffix}`
+    );
+  }
+
+  async function processItem(item) {
     const { imagePath, title, subtitle, cta, badge, linkLabel, category, outputCode } = item;
 
     if (!fs.existsSync(imagePath)) {
-      console.warn(`⚠  Skipping (not found): ${imagePath}`);
-      continue;
+      skipped++;
+      console.warn(`\nSkipping missing file: ${imagePath}`);
+      printProgress(path.basename(imagePath));
+      return;
     }
 
-    console.log(`🔍 Analyzing: ${path.basename(imagePath)}`);
+    console.log(`Analyzing: ${path.basename(imagePath)}`);
+
     let analysis;
     try {
       analysis = await analyzeImage(imagePath);
+      analyzed++;
+      printProgress(`analysis complete - ${path.basename(imagePath)}`);
     } catch (err) {
-      console.warn(`⚠  Analysis failed for ${imagePath}: ${err.message}`);
-      continue;
+      analyzed++;
+      failed++;
+      console.warn(`\nAnalysis failed for ${imagePath}: ${err.message}`);
+      printProgress(path.basename(imagePath));
+      return;
     }
 
     const inputs = { title, subtitle, cta, badge, linkLabel, category };
     let variants = generateVariants(analysis, inputs, {
-      maxVariants: parseInt(maxVariants),
+      maxVariants: variantCount,
       templateMode,
       pinSize,
     });
@@ -103,75 +133,80 @@ async function main() {
     const baseName = path.parse(imagePath).name;
     const sessionDir = path.join(outputDir, baseName);
 
-    variants.forEach(recipe => {
-      const exactFilename = outputCode ? `${outputCode}.${format}` : `pin_${recipe.templateId}_${recipe.variantId}.${format}`;
-      allJobs.push({
-        recipe,
-        imagePath,
-        outputPath: path.join(sessionDir, exactFilename),
-        options: { format, quality: parseInt(quality) },
-      });
-    });
+    for (const recipe of variants) {
+      const exactFilename = outputCode
+        ? `${outputCode}.${outputFormat}`
+        : `pin_${recipe.templateId}_${recipe.variantId}.${outputFormat}`;
+
+      try {
+        const result = await renderPin(
+          recipe,
+          imagePath,
+          path.join(sessionDir, exactFilename),
+          { format: outputFormat, quality: outputQuality }
+        );
+        rendered++;
+        producedAnyOutput = true;
+        printProgress(`${path.basename(result.outputPath)} - ${result.renderTime}ms`);
+      } catch (err) {
+        failed++;
+        console.warn(`\nRender failed for ${path.basename(imagePath)}: ${err.message}`);
+        printProgress(path.basename(imagePath));
+      }
+    }
   }
 
-  if (allJobs.length === 0) {
-    console.error('❌ No render jobs to run');
+  async function workerLoop() {
+    while (true) {
+      const currentIndex = nextIndex++;
+      if (currentIndex >= items.length) {
+        return;
+      }
+      await processItem(items[currentIndex]);
+    }
+  }
+
+  try {
+    await Promise.all(
+      Array.from({ length: Math.min(workerCount, items.length) }, () => workerLoop())
+    );
+  } finally {
     await closeBrowser();
+  }
+
+  if (!producedAnyOutput) {
+    console.error('\nNo render jobs completed successfully');
     process.exit(1);
   }
 
-  console.log(`\n🚀 Starting render — ${allJobs.length} total pins\n`);
-
-  let completed = 0;
-  let failed = 0;
-  const startTime = Date.now();
-
-  await renderBatch(allJobs, {
-    concurrency: parseInt(concurrency),
-    onProgress: ({ result, error }) => {
-      if (error) {
-        failed++;
-        console.log(`  ✗ Failed — ${error}`);
-      } else {
-        completed++;
-        const pct = Math.round(((completed + failed) / allJobs.length) * 100);
-        process.stdout.write(
-          `\r  ✓ ${completed} rendered | ✗ ${failed} failed | ${pct}% — ${result.renderTime}ms`
-        );
-      }
-    },
-  });
-
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`\n\n✅ Batch complete in ${elapsed}s`);
-  console.log(`   ${completed} rendered | ${failed} failed`);
-  console.log(`   Output: ${outputDir}\n`);
-
-  await closeBrowser();
+  console.log(`\n\nBatch complete in ${elapsed}s`);
+  console.log(`  ${rendered} rendered | ${failed} failed | ${skipped} skipped`);
+  console.log(`  Output: ${outputDir}\n`);
 }
 
 function loadFolderItems(folderPath, titlesFilePath) {
   const absFolder = path.isAbsolute(folderPath) ? folderPath : path.join(ROOT, folderPath);
   const exts = ['.jpg', '.jpeg', '.png', '.webp'];
   const images = fs.readdirSync(absFolder)
-    .filter(f => exts.includes(path.extname(f).toLowerCase()))
-    .map(f => path.join(absFolder, f));
+    .filter(file => exts.includes(path.extname(file).toLowerCase()))
+    .map(file => path.join(absFolder, file));
 
   let titles = [{ title: 'Untitled Pin', outputCode: null }];
   if (titlesFilePath) {
     const absTitle = path.isAbsolute(titlesFilePath) ? titlesFilePath : path.join(ROOT, titlesFilePath);
     titles = fs.readFileSync(absTitle, 'utf8')
       .split(/\r?\n/)
-      .map(t => t.trim())
+      .map(line => line.trim())
       .filter(Boolean)
       .map(parseTitleBankLine);
   }
 
   const pairCount = Math.min(images.length, titles.length);
-  return Array.from({ length: pairCount }, (_, i) => ({
-    imagePath: images[i],
-    title: titles[i].title,
-    outputCode: titles[i].outputCode,
+  return Array.from({ length: pairCount }, (_, index) => ({
+    imagePath: images[index],
+    title: titles[index].title,
+    outputCode: titles[index].outputCode,
   }));
 }
 
@@ -189,6 +224,6 @@ function parseTitleBankLine(line) {
 }
 
 main().catch(err => {
-  console.error('\n❌ Fatal error:', err.message);
+  console.error('\nFatal error:', err.message);
   closeBrowser().finally(() => process.exit(1));
 });
