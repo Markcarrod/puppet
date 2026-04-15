@@ -87,7 +87,6 @@ async function main() {
 
   let analyzed = 0;
   let rendered = 0;
-  let failed = 0;
   let skipped = 0;
   let nextIndex = 0;
   let producedAnyOutput = false;
@@ -101,7 +100,7 @@ async function main() {
     const pct = totalItems ? Math.round((processed / totalItems) * 100) : 100;
     const suffix = extra ? ` | ${extra}` : '';
     process.stdout.write(
-      `\rAnalyzed ${analyzed}/${totalItems} | Rendered ${rendered} | Failed ${failed} | Skipped ${skipped} | ${pct}%${suffix}`
+      `\rAnalyzed ${analyzed}/${totalItems} | Rendered ${rendered} | Skipped ${skipped} | ${pct}%${suffix}`
     );
   }
 
@@ -131,8 +130,8 @@ async function main() {
       printProgress(`analysis complete - ${path.basename(imagePath)}`);
     } catch (err) {
       analyzed++;
-      failed++;
-      console.warn(`\nAnalysis failed for ${imagePath}: ${err.message}`);
+      skipped++;
+      console.warn(`\nAnalysis skipped for ${imagePath}: ${err.message}`);
       printProgress(path.basename(imagePath));
       return;
     }
@@ -179,8 +178,8 @@ async function main() {
           logSnapshot(`${rendered} renders completed`);
         }
       } catch (err) {
-        failed++;
-        console.warn(`\nRender failed for ${path.basename(imagePath)}: ${err.message}`);
+        skipped++;
+        console.warn(`\nRender skipped for ${path.basename(imagePath)}: ${err.message}`);
         printProgress(path.basename(imagePath));
       }
     }
@@ -211,7 +210,7 @@ async function main() {
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`\n\nBatch complete in ${elapsed}s`);
-  console.log(`  ${rendered} rendered | ${failed} failed | ${skipped} skipped`);
+  console.log(`  ${rendered} rendered | ${skipped} skipped`);
   console.log(`  Output: ${outputDir}\n`);
 }
 
