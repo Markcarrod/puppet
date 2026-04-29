@@ -218,7 +218,7 @@ async function runBatch(items, runtime, hooks = {}) {
   let lastTemplateId = null;
 
   async function processItem(item) {
-    const { imagePath, title, subtitle, cta, badge, linkLabel, category, outputCode, sequenceNumber } = item;
+    const { imagePath, title, subtitle, cta, badge, linkLabel, category, outputCode, outputSubfolder, sequenceNumber } = item;
 
     if (!fs.existsSync(imagePath)) {
       skipped++;
@@ -269,7 +269,11 @@ async function runBatch(items, runtime, hooks = {}) {
     }
 
     const baseName = path.parse(imagePath).name;
-    const jsonDir = path.join(outputDir, 'json');
+    const safeOutputSubfolder = sanitizeOutputSubfolder(outputSubfolder);
+    const imageOutputDir = safeOutputSubfolder ? path.join(outputDir, safeOutputSubfolder) : outputDir;
+    const jsonDir = safeOutputSubfolder
+      ? path.join(outputDir, 'json', safeOutputSubfolder)
+      : path.join(outputDir, 'json');
     const selectedVariants = applyTemplateRotation(variants, templateMode, lastTemplateId);
     const sequenceSuffix = Number.isInteger(sequenceNumber)
       ? `_${String(sequenceNumber + 1).padStart(6, '0')}`
@@ -288,7 +292,7 @@ async function runBatch(items, runtime, hooks = {}) {
         const result = await renderPin(
           recipe,
           imagePath,
-          path.join(outputDir, exactFilename),
+          path.join(imageOutputDir, exactFilename),
           {
             format: outputFormat,
             quality: outputQuality,
@@ -500,6 +504,7 @@ function loadFolderItems(folderPath, titlesFilePath) {
     imagePath: images[index % images.length],
     title: titles[index % titles.length].title,
     outputCode: titles[index % titles.length].outputCode,
+    outputSubfolder: titles[index % titles.length].outputSubfolder,
     sequenceNumber: index,
   }));
 }
@@ -508,13 +513,24 @@ function parseTitleBankLine(line) {
   const firstColon = line.indexOf(':');
   const lastColon = line.lastIndexOf(':');
 
+  if (firstColon > 0 && lastColon > firstColon) {
+    const outputSubfolder = line.slice(0, firstColon).trim();
+    const title = line.slice(firstColon + 1, lastColon).trim();
+    const outputCode = line.slice(lastColon + 1).trim();
+    return {
+      outputSubfolder: outputSubfolder || null,
+      title: title || 'Untitled Pin',
+      outputCode: outputCode || null,
+    };
+  }
+
   if (firstColon > 0) {
     const title = line.slice(0, firstColon).trim();
     const outputCode = line.slice(lastColon + 1).trim();
-    return { title: title || 'Untitled Pin', outputCode: outputCode || null };
+    return { outputSubfolder: null, title: title || 'Untitled Pin', outputCode: outputCode || null };
   }
 
-  return { title: line.trim() || 'Untitled Pin', outputCode: null };
+  return { outputSubfolder: null, title: line.trim() || 'Untitled Pin', outputCode: null };
 }
 
 function applyTemplateRotation(variants, templateMode, previousTemplateId) {
@@ -539,6 +555,19 @@ function slugify(value) {
 
 function toKebabCase(value) {
   return String(value).replace(/[A-Z]/g, match => `-${match.toLowerCase()}`);
+}
+
+function sanitizeOutputSubfolder(value) {
+  if (!value) return null;
+
+  const normalized = String(value)
+    .split(/[\\/]+/)
+    .map(segment => segment.trim())
+    .filter(segment => segment && segment !== '.' && segment !== '..')
+    .map(segment => segment.replace(/[<>:"|?*]/g, '-'))
+    .filter(Boolean);
+
+  return normalized.length > 0 ? path.join(...normalized) : null;
 }
 
 main().catch(err => {

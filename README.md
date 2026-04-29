@@ -121,7 +121,10 @@ node scripts/batchRender.js \
   --output output/
 ```
 
-For title-bank text files, use either one title per line or `Title:code`. The `Title` is rendered on the pin and `code` becomes the saved filename.
+For title-bank text files, use one of these formats:
+- `subfolder:title:code` to save the image as `output/subfolder/code.ext`
+- `title:code` to save the image as `output/code.ext`
+- `title` to render without a custom output code
 `--concurrency` now controls real Node worker processes, so higher values can use more CPU cores at the cost of more RAM and more Chromium instances.
 
 ### Batch JSON format
