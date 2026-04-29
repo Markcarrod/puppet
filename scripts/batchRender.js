@@ -16,13 +16,14 @@
  *   --format      Output format: jpg|png|webp (default: jpg)
  *   --quality     Output quality 60-100 (default: 88)
  *   --variants    Variants per image (default: 4)
- *   --concurrency Parallel workers / threads (default: 3)
+ *   --concurrency Worker process count (default: 3)
  *   --output      Output directory (default: output/)
  */
 
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { fork } = require('child_process');
 const { parseArgs } = require('./utils/cliArgs');
 const { loadBatchItems } = require('../utils/csvImporter');
 const { analyzeImage } = require('../utils/imageAnalyzer');
@@ -43,97 +44,216 @@ process.on('uncaughtException', err => {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
 
-  const {
-    input,
-    folder,
-    titles: titlesFile,
-    template: templateMode = 'auto',
-    size: pinSize = 'standard',
-    format = 'jpg',
-    quality = 88,
-    variants: maxVariants = 4,
-    concurrency = 3,
-    output: outputDir = path.join(ROOT, 'output'),
-  } = args;
+  if (args.worker) {
+    await runWorker(args);
+    return;
+  }
+
+  await runCoordinator(args);
+}
+
+async function runCoordinator(args) {
+  const runtime = buildRuntimeOptions(args);
+  const items = await loadItemsFromArgs(args);
 
   console.log('\nPinterest Pin Factory - Batch CLI\n');
-
-  let items = [];
-  if (input) {
-    console.log(`Loading batch file: ${input}`);
-    items = await loadBatchItems(input);
-  } else if (folder) {
-    console.log(`Scanning folder: ${folder}`);
-    items = loadFolderItems(folder, titlesFile);
-  } else {
-    console.error('Provide --input <file> or --folder <dir>');
-    process.exit(1);
-  }
 
   if (items.length === 0) {
     console.error('No items to render');
     process.exit(1);
   }
 
-  const workerCount = Math.max(1, parseInt(concurrency, 10) || 1);
-  const variantCount = Math.max(1, parseInt(maxVariants, 10) || 1);
-  const outputFormat = String(format).toLowerCase();
-  const outputQuality = parseInt(quality, 10);
-
+  const workerCount = Math.max(1, Math.min(runtime.concurrency, items.length));
   console.log(`Loaded ${items.length} items`);
-  console.log(`Template: ${templateMode} | Size: ${pinSize} | Format: ${outputFormat} | Quality: ${outputQuality}`);
-  console.log(`Variants per item: ${variantCount} | Threads: ${workerCount}`);
-  console.log(`Mode: analyze -> render immediately\n`);
+  console.log(`Template: ${runtime.templateMode} | Size: ${runtime.pinSize} | Format: ${runtime.outputFormat} | Quality: ${runtime.outputQuality}`);
+  console.log(`Variants per item: ${runtime.variantCount} | Worker processes: ${workerCount}`);
+  console.log(`Mode: analyze -> render immediately | Host CPUs: ${os.cpus().length}\n`);
+
+  if (workerCount === 1) {
+    const printer = createProgressPrinter(items.length);
+    const result = await runBatch(items, runtime, {
+      onProgress: printer.onProgress,
+      onSnapshot: printer.onSnapshot,
+      log: message => console.log(message),
+    });
+    printer.finish();
+    finalizeCoordinatorRun(result, runtime.outputDir);
+    return;
+  }
+
+  const result = await runMultiProcessBatch(args, items.length, workerCount, runtime);
+  finalizeCoordinatorRun(result, runtime.outputDir);
+}
+
+async function runWorker(args) {
+  const runtime = buildRuntimeOptions(args);
+  const workerIndex = Math.max(0, parseInt(args.workerIndex, 10) || 0);
+  const workerCount = Math.max(1, parseInt(args.workerCount, 10) || 1);
+  const allItems = await loadItemsFromArgs(args);
+  const items = allItems.filter((_, index) => index % workerCount === workerIndex);
+
+  if (items.length === 0) {
+    sendWorkerMessage({ type: 'done', summary: makeEmptySummary() });
+    return;
+  }
+
+  const summary = await runBatch(items, runtime, {
+    onProgress: payload => sendWorkerMessage({ type: 'progress', payload }),
+    onSnapshot: payload => sendWorkerMessage({ type: 'snapshot', payload }),
+    log: message => sendWorkerMessage({ type: 'log', message }),
+  });
+
+  sendWorkerMessage({ type: 'done', summary });
+}
+
+async function runMultiProcessBatch(args, totalItems, workerCount, runtime) {
+  const printer = createProgressPrinter(totalItems);
+  const children = [];
+  const childSummaries = new Array(workerCount).fill(null);
+  let completedWorkers = 0;
+
+  console.log(`[Coordinator] Launching ${workerCount} worker processes...\n`);
+
+  const result = await new Promise((resolve, reject) => {
+    let settled = false;
+
+    function settleWithError(err) {
+      if (settled) return;
+      settled = true;
+      for (const child of children) {
+        if (!child.killed) {
+          child.kill();
+        }
+      }
+      reject(err);
+    }
+
+    function tryResolve() {
+      if (settled || completedWorkers !== workerCount) {
+        return;
+      }
+
+      settled = true;
+      const summary = childSummaries.reduce((acc, current) => {
+        const source = current || makeEmptySummary();
+        acc.analyzed += source.analyzed;
+        acc.rendered += source.rendered;
+        acc.failed += source.failed;
+        acc.skipped += source.skipped;
+        acc.producedAnyOutput = acc.producedAnyOutput || source.producedAnyOutput;
+        return acc;
+      }, makeEmptySummary());
+      resolve(summary);
+    }
+
+    for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
+      const child = fork(__filename, buildWorkerArgs(args, workerIndex, workerCount), {
+        cwd: ROOT,
+        silent: true,
+      });
+      children.push(child);
+
+      const prefix = `[W${workerIndex + 1}]`;
+      forwardChildOutput(child.stdout, prefix, process.stdout);
+      forwardChildOutput(child.stderr, prefix, process.stderr);
+
+      child.on('message', message => {
+        if (!message || settled) return;
+
+        if (message.type === 'progress') {
+          printer.onProgress(message.payload);
+        } else if (message.type === 'snapshot') {
+          printer.onSnapshot(message.payload);
+        } else if (message.type === 'log') {
+          console.log(`\n${prefix} ${message.message}`);
+        } else if (message.type === 'done') {
+          childSummaries[workerIndex] = message.summary || makeEmptySummary();
+          completedWorkers++;
+          tryResolve();
+        } else if (message.type === 'fatal') {
+          settleWithError(new Error(`${prefix} ${message.error || 'Worker failed'}`));
+        }
+      });
+
+      child.on('exit', code => {
+        if (settled) return;
+        if (code !== 0 && childSummaries[workerIndex] === null) {
+          settleWithError(new Error(`${prefix} exited with code ${code}`));
+          return;
+        }
+        if (childSummaries[workerIndex] !== null) {
+          tryResolve();
+        }
+      });
+
+      child.on('error', err => {
+        settleWithError(new Error(`${prefix} ${err.message}`));
+      });
+    }
+  }).finally(() => {
+    printer.finish();
+  });
+
+  return result;
+}
+
+async function runBatch(items, runtime, hooks = {}) {
+  const {
+    templateMode,
+    pinSize,
+    variantCount,
+    outputFormat,
+    outputQuality,
+    outputDir,
+  } = runtime;
+  const onProgress = hooks.onProgress || (() => {});
+  const onSnapshot = hooks.onSnapshot || (() => {});
+  const log = hooks.log || (() => {});
 
   let analyzed = 0;
   let rendered = 0;
   let failed = 0;
   let skipped = 0;
-  let nextIndex = 0;
   let producedAnyOutput = false;
   let lastTemplateId = null;
-
-  const startTime = Date.now();
-  const totalItems = items.length;
-
-  function printProgress(extra = '') {
-    const processed = analyzed + skipped;
-    const pct = totalItems ? Math.round((processed / totalItems) * 100) : 100;
-    const suffix = extra ? ` | ${extra}` : '';
-    process.stdout.write(
-      `\rAnalyzed ${analyzed}/${totalItems} | Rendered ${rendered} | Failed ${failed} | Skipped ${skipped} | ${pct}%${suffix}`
-    );
-  }
-
-  function logSnapshot(reason) {
-    const mem = process.memoryUsage();
-    const rssMb = (mem.rss / 1024 / 1024).toFixed(0);
-    const heapMb = (mem.heapUsed / 1024 / 1024).toFixed(0);
-    console.log(`\n[Snapshot] ${reason} | rss=${rssMb}MB heap=${heapMb}MB cpu=${os.cpus().length}`);
-  }
 
   async function processItem(item) {
     const { imagePath, title, subtitle, cta, badge, linkLabel, category, outputCode, sequenceNumber } = item;
 
     if (!fs.existsSync(imagePath)) {
       skipped++;
-      console.warn(`\nSkipping missing file: ${imagePath}`);
-      printProgress(path.basename(imagePath));
+      onProgress({
+        analyzedDelta: 0,
+        renderedDelta: 0,
+        failedDelta: 0,
+        skippedDelta: 1,
+        extra: `missing - ${path.basename(imagePath)}`,
+      });
       return;
     }
-
-    console.log(`Analyzing: ${path.basename(imagePath)}`);
 
     let analysis;
     try {
       analysis = await analyzeImage(imagePath);
       analyzed++;
-      printProgress(`analysis complete - ${path.basename(imagePath)}`);
+      onProgress({
+        analyzedDelta: 1,
+        renderedDelta: 0,
+        failedDelta: 0,
+        skippedDelta: 0,
+        extra: `analysis complete - ${path.basename(imagePath)}`,
+      });
     } catch (err) {
       analyzed++;
       failed++;
-      console.warn(`\nAnalysis failed for ${imagePath}: ${err.message}`);
-      printProgress(path.basename(imagePath));
+      onProgress({
+        analyzedDelta: 1,
+        renderedDelta: 0,
+        failedDelta: 1,
+        skippedDelta: 0,
+        extra: `analysis failed - ${path.basename(imagePath)}`,
+      });
+      log(`Analysis failed for ${imagePath}: ${err.message}`);
       return;
     }
 
@@ -177,45 +297,181 @@ async function main() {
         );
         rendered++;
         producedAnyOutput = true;
-        printProgress(`${path.basename(result.outputPath)} - ${result.renderTime}ms`);
+        onProgress({
+          analyzedDelta: 0,
+          renderedDelta: 1,
+          failedDelta: 0,
+          skippedDelta: 0,
+          extra: `${path.basename(result.outputPath)} - ${result.renderTime}ms`,
+        });
         if (rendered % 25 === 0) {
-          logSnapshot(`${rendered} renders completed`);
+          const mem = process.memoryUsage();
+          onSnapshot({
+            reason: `${rendered} renders completed`,
+            rssMb: Math.round(mem.rss / 1024 / 1024),
+            heapMb: Math.round(mem.heapUsed / 1024 / 1024),
+            cpuCount: os.cpus().length,
+          });
         }
       } catch (err) {
         failed++;
-        console.warn(`\nRender failed for ${path.basename(imagePath)}: ${err.message}`);
-        printProgress(path.basename(imagePath));
+        onProgress({
+          analyzedDelta: 0,
+          renderedDelta: 0,
+          failedDelta: 1,
+          skippedDelta: 0,
+          extra: `render failed - ${path.basename(imagePath)}`,
+        });
+        log(`Render failed for ${path.basename(imagePath)}: ${err.message}`);
       }
-    }
-  }
-
-  async function workerLoop() {
-    while (true) {
-      const currentIndex = nextIndex++;
-      if (currentIndex >= items.length) {
-        return;
-      }
-      await processItem(items[currentIndex]);
     }
   }
 
   try {
-    await Promise.all(
-      Array.from({ length: Math.min(workerCount, items.length) }, () => workerLoop())
-    );
+    for (const item of items) {
+      await processItem(item);
+    }
   } finally {
     await closeBrowser();
   }
 
-  if (!producedAnyOutput) {
+  return { analyzed, rendered, failed, skipped, producedAnyOutput };
+}
+
+function createProgressPrinter(totalItems) {
+  let analyzed = 0;
+  let rendered = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  return {
+    onProgress(payload = {}) {
+      analyzed += payload.analyzedDelta || 0;
+      rendered += payload.renderedDelta || 0;
+      failed += payload.failedDelta || 0;
+      skipped += payload.skippedDelta || 0;
+      const processed = analyzed + skipped;
+      const pct = totalItems ? Math.round((processed / totalItems) * 100) : 100;
+      const suffix = payload.extra ? ` | ${payload.extra}` : '';
+      process.stdout.write(
+        `\rAnalyzed ${analyzed}/${totalItems} | Rendered ${rendered} | Failed ${failed} | Skipped ${skipped} | ${pct}%${suffix}`
+      );
+    },
+    onSnapshot(snapshot = {}) {
+      const rssMb = snapshot.rssMb ?? '?';
+      const heapMb = snapshot.heapMb ?? '?';
+      const cpuCount = snapshot.cpuCount ?? '?';
+      console.log(`\n[Snapshot] ${snapshot.reason} | rss=${rssMb}MB heap=${heapMb}MB cpu=${cpuCount}`);
+    },
+    finish() {
+      process.stdout.write('\n');
+    },
+  };
+}
+
+function finalizeCoordinatorRun(summary, outputDir) {
+  if (!summary.producedAnyOutput) {
     console.error('\nNo render jobs completed successfully');
     process.exit(1);
   }
 
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`\n\nBatch complete in ${elapsed}s`);
-  console.log(`  ${rendered} rendered | ${failed} failed | ${skipped} skipped`);
+  console.log(`\nBatch complete`);
+  console.log(`  ${summary.rendered} rendered | ${summary.failed} failed | ${summary.skipped} skipped`);
   console.log(`  Output: ${outputDir}\n`);
+}
+
+function buildRuntimeOptions(args) {
+  return {
+    templateMode: args.template || 'auto',
+    pinSize: args.size || 'standard',
+    outputFormat: String(args.format || 'jpg').toLowerCase(),
+    outputQuality: parseInt(args.quality, 10) || 88,
+    variantCount: Math.max(1, parseInt(args.variants, 10) || 4),
+    concurrency: Math.max(1, parseInt(args.concurrency, 10) || 3),
+    outputDir: args.output
+      ? (path.isAbsolute(args.output) ? args.output : path.join(ROOT, args.output))
+      : path.join(ROOT, 'output'),
+  };
+}
+
+async function loadItemsFromArgs(args) {
+  if (args.input) {
+    console.log(`Loading batch file: ${args.input}`);
+    return loadBatchItems(args.input);
+  }
+
+  if (args.folder) {
+    console.log(`Scanning folder: ${args.folder}`);
+    return loadFolderItems(args.folder, args.titles);
+  }
+
+  console.error('Provide --input <file> or --folder <dir>');
+  process.exit(1);
+}
+
+function buildWorkerArgs(args, workerIndex, workerCount) {
+  const childArgs = [];
+  const passThroughKeys = [
+    'input',
+    'folder',
+    'titles',
+    'template',
+    'size',
+    'format',
+    'quality',
+    'variants',
+    'output',
+  ];
+
+  for (const key of passThroughKeys) {
+    if (args[key] === undefined || args[key] === false || args[key] === null) {
+      continue;
+    }
+    childArgs.push(`--${toKebabCase(key)}`, String(args[key]));
+  }
+
+  childArgs.push('--worker', 'true');
+  childArgs.push('--worker-index', String(workerIndex));
+  childArgs.push('--worker-count', String(workerCount));
+  return childArgs;
+}
+
+function forwardChildOutput(stream, prefix, destination) {
+  if (!stream) return;
+  let buffered = '';
+
+  stream.on('data', chunk => {
+    buffered += chunk.toString();
+    const parts = buffered.split(/\r?\n/);
+    buffered = parts.pop() || '';
+    for (const part of parts) {
+      if (part.trim()) {
+        destination.write(`${prefix} ${part}\n`);
+      }
+    }
+  });
+
+  stream.on('end', () => {
+    if (buffered.trim()) {
+      destination.write(`${prefix} ${buffered}\n`);
+    }
+  });
+}
+
+function sendWorkerMessage(message) {
+  if (typeof process.send === 'function') {
+    process.send(message);
+  }
+}
+
+function makeEmptySummary() {
+  return {
+    analyzed: 0,
+    rendered: 0,
+    failed: 0,
+    skipped: 0,
+    producedAnyOutput: false,
+  };
 }
 
 function loadFolderItems(folderPath, titlesFilePath) {
@@ -281,7 +537,12 @@ function slugify(value) {
     .toLowerCase() || 'variant';
 }
 
+function toKebabCase(value) {
+  return String(value).replace(/[A-Z]/g, match => `-${match.toLowerCase()}`);
+}
+
 main().catch(err => {
+  sendWorkerMessage({ type: 'fatal', error: err.message });
   console.error('\nFatal error:', err.message);
   closeBrowser().finally(() => process.exit(1));
 });

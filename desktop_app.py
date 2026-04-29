@@ -143,10 +143,10 @@ class PinFactoryDesktop:
         self._field(card, 2, 0, "Format", ttk.Combobox(card, textvariable=self.output_format, values=["jpg", "png", "webp"], state="readonly"))
         self._field(card, 2, 2, "Quality", self._entry(card, self.quality))
         self._field(card, 3, 0, "Variants", self._entry(card, self.variants))
-        self._field(card, 3, 2, "Threads", self._entry(card, self.concurrency))
+        self._field(card, 3, 2, "Workers", self._entry(card, self.concurrency))
         ttk.Label(
             card,
-            text="Threads control how many images are analyzed and rendered at the same time.",
+            text="Workers control how many Node render processes run in parallel across CPU cores.",
             style="Meta.TLabel",
         ).grid(row=4, column=0, columnspan=4, sticky="w", pady=(4, 0))
 
@@ -238,7 +238,7 @@ class PinFactoryDesktop:
             quality = min(100, max(60, int(self.quality.get().strip() or "88")))
             concurrency = max(1, int(self.concurrency.get().strip() or "5"))
         except ValueError:
-            messagebox.showerror("Invalid settings", "Variants, quality, and threads must be numbers.")
+            messagebox.showerror("Invalid settings", "Variants, quality, and workers must be numbers.")
             return
 
         self._save_settings()
@@ -259,7 +259,7 @@ class PinFactoryDesktop:
 
         self.log_text.delete("1.0", "end")
         self._append_log("Starting batch render...\n")
-        self._append_log(f"Render mode: analyze -> render immediately with {concurrency} threads\n")
+        self._append_log(f"Render mode: multi-process analyze -> render with {concurrency} worker processes\n")
         self._append_log("Output mode: images go to the selected folder, JSON goes to an output\\json folder\n")
         self._append_log("Title bank format: Title:code -> image text uses Title, file saves as code.ext\n")
         self._append_log(f"Debug log: {DEBUG_LOG}\n")

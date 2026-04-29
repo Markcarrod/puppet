@@ -122,6 +122,7 @@ node scripts/batchRender.js \
 ```
 
 For title-bank text files, use either one title per line or `Title:code`. The `Title` is rendered on the pin and `code` becomes the saved filename.
+`--concurrency` now controls real Node worker processes, so higher values can use more CPU cores at the cost of more RAM and more Chromium instances.
 
 ### Batch JSON format
 
