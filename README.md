@@ -121,6 +121,8 @@ node scripts/batchRender.js \
   --output output/
 ```
 
+For title-bank text files, use either one title per line or `Title:code`. The `Title` is rendered on the pin and `code` becomes the saved filename.
+
 ### Batch JSON format
 
 ```json

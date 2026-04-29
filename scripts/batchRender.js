@@ -10,7 +10,7 @@
  * Options:
  *   --input       Path to JSON or CSV batch file
  *   --folder      Path to folder of images
- *   --titles      Path to .txt file (one title per line, or Title:Description:Code)
+ *   --titles      Path to .txt file (one title per line, or Title:code)
  *   --template    Template ID or "auto" (default: auto)
  *   --size        Pin size: standard|tall|square_ish|square (default: standard)
  *   --format      Output format: jpg|png|webp (default: jpg)
@@ -113,7 +113,7 @@ async function main() {
   }
 
   async function processItem(item) {
-    const { imagePath, title, subtitle, cta, badge, linkLabel, category, outputCode } = item;
+    const { imagePath, title, subtitle, cta, badge, linkLabel, category, outputCode, sequenceNumber } = item;
 
     if (!fs.existsSync(imagePath)) {
       skipped++;
@@ -151,15 +151,18 @@ async function main() {
     const baseName = path.parse(imagePath).name;
     const jsonDir = path.join(outputDir, 'json');
     const selectedVariants = applyTemplateRotation(variants, templateMode, lastTemplateId);
+    const sequenceSuffix = Number.isInteger(sequenceNumber)
+      ? `_${String(sequenceNumber + 1).padStart(6, '0')}`
+      : '';
 
     for (const recipe of selectedVariants) {
       lastTemplateId = recipe.templateId;
       const exactFilename = outputCode
         ? `${outputCode}.${outputFormat}`
-        : `${baseName}_${recipe.templateId}_${slugify(recipe.variantId)}.${outputFormat}`;
+        : `${baseName}${sequenceSuffix}_${recipe.templateId}_${slugify(recipe.variantId)}.${outputFormat}`;
       const metaFilename = outputCode
         ? `${outputCode}.json`
-        : `${baseName}_${recipe.templateId}_${slugify(recipe.variantId)}.json`;
+        : `${baseName}${sequenceSuffix}_${recipe.templateId}_${slugify(recipe.variantId)}.json`;
 
       try {
         const result = await renderPin(
@@ -222,6 +225,10 @@ function loadFolderItems(folderPath, titlesFilePath) {
     .filter(file => exts.includes(path.extname(file).toLowerCase()))
     .map(file => path.join(absFolder, file));
 
+  if (images.length === 0) {
+    return [];
+  }
+
   let titles = [{ title: 'Untitled Pin', outputCode: null }];
   if (titlesFilePath) {
     const absTitle = path.isAbsolute(titlesFilePath) ? titlesFilePath : path.join(ROOT, titlesFilePath);
@@ -232,11 +239,12 @@ function loadFolderItems(folderPath, titlesFilePath) {
       .map(parseTitleBankLine);
   }
 
-  const pairCount = Math.min(images.length, titles.length);
-  return Array.from({ length: pairCount }, (_, index) => ({
-    imagePath: images[index],
-    title: titles[index].title,
-    outputCode: titles[index].outputCode,
+  const itemCount = Math.max(images.length, titles.length);
+  return Array.from({ length: itemCount }, (_, index) => ({
+    imagePath: images[index % images.length],
+    title: titles[index % titles.length].title,
+    outputCode: titles[index % titles.length].outputCode,
+    sequenceNumber: index,
   }));
 }
 
@@ -244,7 +252,7 @@ function parseTitleBankLine(line) {
   const firstColon = line.indexOf(':');
   const lastColon = line.lastIndexOf(':');
 
-  if (firstColon > 0 && lastColon > firstColon) {
+  if (firstColon > 0) {
     const title = line.slice(0, firstColon).trim();
     const outputCode = line.slice(lastColon + 1).trim();
     return { title: title || 'Untitled Pin', outputCode: outputCode || null };
