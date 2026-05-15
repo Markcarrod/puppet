@@ -246,12 +246,9 @@ async function runBatch(items, runtime, hooks = {}) {
   let lastTemplateId = null;
 
   async function processItem(item) {
-    const { imagePath, title, subtitle, cta, badge, linkLabel, category, outputCode, outputSubfolder, sequenceNumber } = item;
-    const safeOutputSubfolder = sanitizeOutputSubfolder(outputSubfolder);
-    const imageOutputDir = safeOutputSubfolder ? path.join(outputDir, safeOutputSubfolder) : outputDir;
-    const jsonDir = safeOutputSubfolder
-      ? path.join(outputDir, 'json', safeOutputSubfolder)
-      : path.join(outputDir, 'json');
+    const { imagePath, title, subtitle, cta, badge, linkLabel, category, outputCode, sequenceNumber } = item;
+    const imageOutputDir = outputDir;
+    const jsonDir = path.join(outputDir, 'json');
 
     if (resume && outputCode) {
       const existingOutputPath = path.join(imageOutputDir, `${outputCode}.${outputFormat}`);
@@ -466,12 +463,9 @@ function createStreamingBatchRunner(runtime, hooks = {}) {
 
   return {
     async processItem(item) {
-      const { imagePath, title, subtitle, cta, badge, linkLabel, category, outputCode, outputSubfolder, sequenceNumber } = item;
-      const safeOutputSubfolder = sanitizeOutputSubfolder(outputSubfolder);
-      const imageOutputDir = safeOutputSubfolder ? path.join(outputDir, safeOutputSubfolder) : outputDir;
-      const jsonDir = safeOutputSubfolder
-        ? path.join(outputDir, 'json', safeOutputSubfolder)
-        : path.join(outputDir, 'json');
+      const { imagePath, title, subtitle, cta, badge, linkLabel, category, outputCode, sequenceNumber } = item;
+      const imageOutputDir = outputDir;
+      const jsonDir = path.join(outputDir, 'json');
 
       if (resume && outputCode) {
         const existingOutputPath = path.join(imageOutputDir, `${outputCode}.${outputFormat}`);
