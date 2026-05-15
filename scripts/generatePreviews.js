@@ -85,7 +85,7 @@ async function main() {
     title:    'Premium Pinterest Pin Title Here',
     subtitle: 'A short supporting line that adds context',
     category: 'LIFESTYLE',
-    cta:      'Read More',
+    cta:      'Save This',
     badge:    'NEW',
   };
 

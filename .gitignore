@@ -1,6 +1,7 @@
 node_modules/
 output/
 uploads/
+previews/
 .env
 *.log
 npm-debug.log*

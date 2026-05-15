@@ -11,29 +11,28 @@ const OPACITY_VARIANTS = [0.72, 0.82, 0.90];
 const SPACING_VARIANTS = ['tight', 'normal', 'airy'];
 
 const TEMPLATE_PRIORITY = {
-  dark_glass_finance: 102,
-  luxury_desk_headline: 100,
-  center_white_sheet: 96,
-  lower_third_card: 94,
-  floating_soft_panel: 92,
-  split_hero_editorial: 90,
-  checklist_card: 88,
-  numbered_list_feature: 87,
-  upper_third_overlay: 86,
+  lower_third_card: 104,
+  center_white_sheet: 102,
+  checklist_card: 100,
+  numbered_list_feature: 98,
+  floating_soft_panel: 96,
+  gradient_editorial: 92,
+  upper_third_overlay: 88,
+  split_hero_editorial: 84,
+  premium_article_cover: 82,
+  left_editorial_column: 80,
   top_middle_headline: 82,
-  bold_statement_poster: 80,
-  gradient_editorial: 78,
-  premium_article_cover: 76,
-  left_editorial_column: 72,
-  minimalist_gradient_poster: 70,
-  soft_magazine: 58,
+  bold_statement_poster: 78,
+  dark_glass_finance: 72,
+  luxury_desk_headline: 70,
+  soft_magazine: 64,
+  minimalist_gradient_poster: 58,
 };
 
 const GROUPS = {
-  tierA: ['dark_glass_finance', 'luxury_desk_headline', 'center_white_sheet', 'lower_third_card', 'floating_soft_panel'],
-  upper: ['upper_third_overlay', 'top_middle_headline', 'luxury_desk_headline'],
-  white: ['center_white_sheet', 'lower_third_card', 'floating_soft_panel', 'soft_magazine', 'checklist_card', 'numbered_list_feature'],
-  editorial: ['split_hero_editorial', 'gradient_editorial', 'premium_article_cover', 'left_editorial_column', 'minimalist_gradient_poster', 'bold_statement_poster'],
+  readable: ['lower_third_card', 'center_white_sheet', 'checklist_card', 'numbered_list_feature', 'floating_soft_panel', 'gradient_editorial', 'upper_third_overlay'],
+  editorial: ['split_hero_editorial', 'premium_article_cover', 'left_editorial_column', 'top_middle_headline'],
+  experimental: ['dark_glass_finance', 'luxury_desk_headline', 'bold_statement_poster', 'soft_magazine', 'minimalist_gradient_poster'],
 };
 
 const { buildTextVars, qualityCheck } = require('./textEngine');
@@ -136,15 +135,13 @@ function selectAutoMix(pool, maxVariants) {
     }
   };
 
-  const tierACount = Math.max(3, Math.round(maxVariants * 0.45));
-  const upperCount = Math.max(1, Math.round(maxVariants * 0.25));
-  const whiteCount = Math.max(1, Math.round(maxVariants * 0.15));
-  const editorialCount = Math.max(1, maxVariants - tierACount - upperCount - whiteCount);
+  const readableCount = Math.max(2, Math.round(maxVariants * 0.70));
+  const editorialCount = Math.max(1, Math.round(maxVariants * 0.20));
+  const experimentalCount = Math.max(0, maxVariants - readableCount - editorialCount);
 
-  addFrom(GROUPS.tierA, tierACount, 2);
-  addFrom(GROUPS.upper, upperCount, 2);
-  addFrom(GROUPS.white, whiteCount, 2);
+  addFrom(GROUPS.readable, readableCount, 2);
   addFrom(GROUPS.editorial, editorialCount, 1);
+  addFrom(GROUPS.experimental, experimentalCount, 1);
 
   for (const recipe of pool) {
     if (results.length >= maxVariants) break;
