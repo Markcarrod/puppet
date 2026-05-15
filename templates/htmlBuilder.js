@@ -66,6 +66,7 @@ function buildPinHTML(recipe, imageDataUrl) {
 
   const layoutHTML   = buildLayoutHTML(templateId, recipe, textVars, textColor, subColor, fontObj, overlayConfig, accentColor);
   const templateCSS  = buildTemplateStyle(templateId, recipe, textVars, width, height, overlayConfig, accentColor);
+  const readabilityScrim = buildReadabilityScrim(templateId, layout, overlayConfig, recipe.analysis, textColor);
 
   // Letter-spacing derived from font preset
   const titleTracking = getLetterSpacing(fontObj.heading, textVars.fontSize, false);
@@ -116,6 +117,8 @@ function buildPinHTML(recipe, imageDataUrl) {
     background: ${layout.gradientOverlay};
     z-index: 2;
   }` : ''}
+
+  ${readabilityScrim.css}
 
   ${templateCSS}
 
@@ -279,6 +282,7 @@ function buildPinHTML(recipe, imageDataUrl) {
 <div class="pin-root" id="pin-root">
   <div class="pin-bg"></div>
   ${layout.gradientOverlay ? '<div class="pin-veil"></div>' : ''}
+  ${readabilityScrim.html}
   ${layoutHTML}
 </div>
 </body>
@@ -299,6 +303,121 @@ function resolveOverlay(overlayObj, adaptiveOpacity) {
   }
 
   return { type, bg, blur: blur || '0px', edge: edge || 'soft', radius: radius || '0px', opacity };
+}
+
+function buildReadabilityScrim(templateId, layout, overlay, analysis, textColor) {
+  if (!needsReadabilityScrim(templateId, layout, overlay, analysis, textColor)) {
+    return { css: '', html: '' };
+  }
+
+  const position = layout.textPosition || 'center';
+  const brightness = getTextZoneBrightness(position, analysis);
+  const variance = getTextZoneVariance(position, analysis);
+  const lightText = isLightText(textColor);
+  const alpha = lightText
+    ? clamp(0.22 + ((brightness - 118) / 255) + (variance / 320), 0.26, 0.48)
+    : clamp(0.16 + ((140 - brightness) / 260) + (variance / 420), 0.18, 0.34);
+  const softAlpha = Math.max(lightText ? 0.08 : 0.06, alpha - (lightText ? 0.18 : 0.12));
+  const rgb = lightText ? '0,0,0' : '255,255,255';
+
+  let css;
+  if (position.includes('upper')) {
+    css = `
+  .pin-readability-scrim {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 48%;
+    z-index: 3;
+    background: linear-gradient(to bottom, rgba(${rgb},${alpha.toFixed(2)}) 0%, rgba(${rgb},${softAlpha.toFixed(2)}) 58%, transparent 100%);
+    pointer-events: none;
+  }`;
+  } else if (position.includes('lower')) {
+    css = `
+  .pin-readability-scrim {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 54%;
+    z-index: 3;
+    background: linear-gradient(to top, rgba(${rgb},${alpha.toFixed(2)}) 0%, rgba(${rgb},${softAlpha.toFixed(2)}) 62%, transparent 100%);
+    pointer-events: none;
+  }`;
+  } else {
+    css = `
+  .pin-readability-scrim {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    background: radial-gradient(ellipse at center, rgba(${rgb},${alpha.toFixed(2)}) 0%, rgba(${rgb},${softAlpha.toFixed(2)}) 42%, transparent 72%);
+    pointer-events: none;
+  }`;
+  }
+
+  return { css, html: '<div class="pin-readability-scrim"></div>' };
+}
+
+function needsReadabilityScrim(templateId, layout, overlay, analysis, textColor) {
+  if (!analysis) return false;
+  if (hasReadableBacking(overlay)) return false;
+
+  const directTemplates = new Set([
+    'upper_third_overlay',
+    'top_middle_headline',
+    'minimalist_gradient_poster',
+    'bold_statement_poster',
+  ]);
+  if (!directTemplates.has(templateId)) return false;
+  if (overlay?.type !== 'none' && overlay?.type !== 'fade') return false;
+
+  const position = layout.textPosition || 'center';
+  const brightness = getTextZoneBrightness(position, analysis);
+  const variance = getTextZoneVariance(position, analysis);
+  if (isLightText(textColor)) {
+    return brightness > 118 || variance > 46 || analysis.isLight;
+  }
+  return brightness > 135 || brightness < 105 || variance > 38 || analysis.isLight || analysis.busyZones?.length > 0;
+}
+
+function hasReadableBacking(overlay) {
+  return ['sheet', 'card', 'lower', 'panel', 'side'].includes(overlay?.type);
+}
+
+function isLightText(color) {
+  const normalized = String(color || '').trim().toLowerCase();
+  return ['#fff', '#ffffff', '#fafaf8', '#f8efe0', '#f5f5f0', '#f5f0e8'].includes(normalized);
+}
+
+function getTextZoneBrightness(position, analysis) {
+  const zones = analysis?.zones || {};
+  if (position.includes('upper')) return averageZone(zones.top, zones.upperMid, analysis.topBrightness);
+  if (position.includes('lower')) return averageZone(zones.lowerMid, zones.bottom, analysis.bottomBrightness);
+  return zones.center?.brightness ?? analysis.avgBrightness ?? 128;
+}
+
+function getTextZoneVariance(position, analysis) {
+  const zones = analysis?.zones || {};
+  if (position.includes('upper')) return averageZoneVariance(zones.top, zones.upperMid);
+  if (position.includes('lower')) return averageZoneVariance(zones.lowerMid, zones.bottom);
+  return zones.center?.variance ?? analysis.centerVariance ?? 0;
+}
+
+function averageZone(a, b, fallback = 128) {
+  const values = [a?.brightness, b?.brightness].filter(Number.isFinite);
+  if (!values.length) return fallback;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function averageZoneVariance(a, b) {
+  const values = [a?.variance, b?.variance].filter(Number.isFinite);
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }
 
 // ─── Layout HTML ──────────────────────────────────────────────────────────────

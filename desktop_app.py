@@ -2,6 +2,7 @@ import os
 import platform
 import queue
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -40,6 +41,7 @@ class PinFactoryDesktop:
 
         self.log_queue = queue.Queue()
         self.process = None
+        self.is_paused = False
 
         self.images_dir = tk.StringVar()
         self.titles_file = tk.StringVar()
@@ -210,6 +212,8 @@ class PinFactoryDesktop:
         row.pack(fill="x", pady=(0, 8))
 
         ttk.Button(row, text="Start Batch Render", command=self.start_render, style="Accent.TButton").pack(side="left")
+        self.pause_button = ttk.Button(row, text="Pause", command=self.toggle_pause, style="Ghost.TButton", state="disabled")
+        self.pause_button.pack(side="left", padx=(8, 0))
         ttk.Button(row, text="Stop", command=self.stop_render, style="Ghost.TButton").pack(side="left", padx=(8, 0))
         ttk.Button(row, text="Open Output Folder", command=self.open_output_folder, style="Ghost.TButton").pack(side="left", padx=(8, 0))
         ttk.Label(row, textvariable=self.status_text, style="Status.TLabel").pack(side="right")
@@ -315,6 +319,8 @@ class PinFactoryDesktop:
         write_debug(f"IMAGE_LIST_FILE: {self.image_list_file.get().strip()}")
         write_debug(f"OUTPUT_DIR: {self.output_dir.get().strip()}")
         self.status_text.set("Running")
+        self.is_paused = False
+        self.pause_button.configure(text="Pause", state="normal")
         self.progress.start(10)
 
         def worker():
@@ -351,8 +357,115 @@ class PinFactoryDesktop:
 
     def stop_render(self):
         if self.process and self.process.poll() is None:
+            if self.is_paused:
+                self._resume_process_tree()
             self.process.terminate()
             self._append_log("\nStopping process...\n")
+
+    def toggle_pause(self):
+        if not self.process or self.process.poll() is not None:
+            return
+
+        if self.is_paused:
+            self._resume_process_tree()
+            self.is_paused = False
+            self.pause_button.configure(text="Pause")
+            self.status_text.set("Running")
+            self.progress.start(10)
+            self._append_log("\nResuming process...\n")
+        else:
+            self._pause_process_tree()
+            self.is_paused = True
+            self.pause_button.configure(text="Resume")
+            self.status_text.set("Paused")
+            self.progress.stop()
+            self._append_log("\nPaused process...\n")
+
+    def _pause_process_tree(self):
+        self._send_process_tree_signal("suspend")
+
+    def _resume_process_tree(self):
+        self._send_process_tree_signal("resume")
+
+    def _send_process_tree_signal(self, action):
+        if not self.process or self.process.poll() is not None:
+            return
+
+        if platform.system().lower().startswith("win"):
+            for pid in self._windows_process_tree_pids(self.process.pid, action):
+                self._windows_suspend_resume_pid(pid, action)
+            return
+
+        sig = signal.SIGSTOP if action == "suspend" else signal.SIGCONT
+        try:
+            os.killpg(os.getpgid(self.process.pid), sig)
+        except Exception:
+            os.kill(self.process.pid, sig)
+
+    def _windows_process_tree_pids(self, root_pid, action):
+        try:
+            output = subprocess.check_output(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress",
+                ],
+                stderr=subprocess.DEVNULL,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            records = json.loads(output or "[]")
+        except Exception as exc:
+            write_debug(f"Could not inspect process tree: {exc}")
+            return [root_pid]
+
+        if isinstance(records, dict):
+            records = [records]
+
+        children_by_parent = {}
+        for record in records:
+            try:
+                parent = int(record.get("ParentProcessId"))
+                child = int(record.get("ProcessId"))
+            except (TypeError, ValueError):
+                continue
+            children_by_parent.setdefault(parent, []).append(child)
+
+        ordered = []
+        stack = [root_pid]
+        seen = set()
+        while stack:
+            pid = stack.pop()
+            if pid in seen:
+                continue
+            seen.add(pid)
+            ordered.append(pid)
+            stack.extend(children_by_parent.get(pid, []))
+        return list(reversed(ordered)) if action == "suspend" else ordered
+
+    def _windows_suspend_resume_pid(self, pid, action):
+        try:
+            import ctypes
+
+            access = 0x0800
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            ntdll = ctypes.WinDLL("ntdll", use_last_error=True)
+            handle = kernel32.OpenProcess(access, False, int(pid))
+            if not handle:
+                return
+            try:
+                if action == "suspend":
+                    ntdll.NtSuspendProcess(handle)
+                else:
+                    ntdll.NtResumeProcess(handle)
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception as exc:
+            write_debug(f"Could not {action} pid {pid}: {exc}")
 
     def open_output_folder(self):
         output_path = self.output_dir.get().strip() or str(OUTPUT_DIR)
@@ -371,6 +484,8 @@ class PinFactoryDesktop:
                 if isinstance(item, tuple) and item[0] == "__DONE__":
                     self.progress.stop()
                     self.status_text.set("Done" if item[1] == 0 else "Failed")
+                    self.is_paused = False
+                    self.pause_button.configure(text="Pause", state="disabled")
                 else:
                     self._append_log(item)
         except queue.Empty:
@@ -440,6 +555,8 @@ class PinFactoryDesktop:
         if self.process and self.process.poll() is None:
             if not messagebox.askyesno("Quit", "A render is still running. Stop it and quit?"):
                 return
+            if self.is_paused:
+                self._resume_process_tree()
             self.process.terminate()
         self._save_settings()
         self.root.destroy()
