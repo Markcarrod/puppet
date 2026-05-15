@@ -59,7 +59,7 @@ function buildPinHTML(recipe, imageDataUrl) {
   // Dominant/Accent color logic
   const dominant = recipe.analysis?.dominantColor;
   const useAccent = dominant?.isSaturated;
-  const accentColor = useAccent ? dominant.hex : (palette ? palette.accent : (recipe.analysis?.autoTextColor || '#ffffff'));
+  const accentColor = layout.accentColor || (useAccent ? dominant.hex : (palette ? palette.accent : (recipe.analysis?.autoTextColor || '#ffffff')));
 
   const textColor = palette ? palette.text : (recipe.analysis?.autoTextColor || '#ffffff');
   const subColor  = palette ? palette.sub  : textColor;
@@ -163,6 +163,39 @@ function buildPinHTML(recipe, imageDataUrl) {
     font-feature-settings: "liga" 1, "kern" 1;
   }
 
+  .pin-checklist {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    width: 100%;
+    max-width: ${layout.maxTitleWidth};
+    margin-top: ${layout.showHRule ? 0 : textVars.titleMarginBottom}px;
+  }
+
+  .pin-checklist li {
+    position: relative;
+    padding-left: 36px;
+    font-family: ${fontObj.body};
+    font-weight: 600;
+    font-size: ${Math.max(20, Math.round(textVars.subtitleSize * 0.86))}px;
+    line-height: 1.35;
+    color: ${subColor};
+    text-rendering: optimizeLegibility;
+  }
+
+  .pin-checklist li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.23em;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2px solid ${accentColor || textColor};
+    background: radial-gradient(circle at center, ${accentColor || textColor} 0 38%, transparent 42%);
+  }
+
   .pin-category {
     font-family: ${fontObj.body};
     font-size: ${textVars.categorySize}px;
@@ -230,6 +263,14 @@ function buildPinHTML(recipe, imageDataUrl) {
   .title-block {
     margin-bottom: ${textVars.titleMarginBottom}px;
   }
+
+  .number-mark {
+    font-family: ${fontObj.heading};
+    font-weight: 800;
+    color: ${accentColor || textColor};
+    letter-spacing: -0.04em;
+    line-height: 0.86;
+  }
 </style>
 </head>
 <body>
@@ -275,9 +316,7 @@ function buildLayoutHTML(templateId, recipe, textVars, textColor, subColor, font
     ? `<div class="pin-hrule"></div>`
     : '';
 
-  const subtitleEl = inputs.subtitle
-    ? `<div class="pin-subtitle">${esc(inputs.subtitle)}</div>`
-    : '';
+  const subtitleEl = buildSubtitleHTML(inputs.subtitle, layout.contentStyle);
 
   const categoryEl = inputs.category
     ? `<div class="pin-category">${esc(inputs.category)}</div>`
@@ -304,9 +343,19 @@ function buildLayoutHTML(templateId, recipe, textVars, textColor, subColor, font
 
     case 'center_white_sheet':
     case 'floating_soft_panel':
+    case 'checklist_card':
+    case 'dark_glass_finance':
       return `<div class="overlay-panel"><div class="overlay-inner">${inner}</div></div>`;
 
     case 'lower_third_card':
+    case 'numbered_list_feature':
+      if (templateId === 'numbered_list_feature') {
+        const { number, title } = splitLeadingNumber(inputs.title);
+        const numberedTitle = title
+          ? `<div class="pin-title title-block">${textVars.wrappedTitle?.length ? textVars.wrappedTitle.map(line => `<span class="pin-title-line">${esc(line.replace(/^\s*\d+[\).:\-\s]*/, ''))}</span>`).join('') : esc(title)}</div>`
+          : titleEl;
+        return `<div class="number-card"><div class="number-mark">${esc(number || '01')}</div><div class="number-content">${categoryEl}${badgeEl}${numberedTitle}${hRule}${subtitleEl}${ctaEl}${linkEl}</div></div>`;
+      }
       return `<div class="lower-card"><div class="lower-card-inner">${inner}</div></div>`;
 
     case 'soft_magazine':
@@ -315,17 +364,42 @@ function buildLayoutHTML(templateId, recipe, textVars, textColor, subColor, font
       return `<div class="article-cover"><div class="cover-inner">${inner}</div></div>`;
 
     case 'left_editorial_column':
+    case 'split_hero_editorial':
       return `<div class="editorial-column"><div class="column-inner">${inner}</div></div>`;
 
     case 'luxury_desk_headline':
       return `<div class="luxury-panel"><div class="luxury-inner">${inner}</div></div>`;
 
     case 'minimalist_gradient_poster':
+    case 'bold_statement_poster':
       return `<div class="poster-center"><div class="poster-inner">${inner}</div></div>`;
 
     default:
       return `<div class="text-zone">${inner}</div>`;
   }
+}
+
+function buildSubtitleHTML(subtitle, contentStyle) {
+  if (!subtitle) return '';
+
+  if (contentStyle === 'checklist') {
+    const items = String(subtitle)
+      .split(/\r?\n|[;|]/)
+      .map(item => item.replace(/^[-*•\s]+/, '').trim())
+      .filter(Boolean)
+      .slice(0, 5);
+
+    if (items.length > 1) {
+      return `<ul class="pin-checklist">${items.map(item => `<li>${esc(item)}</li>`).join('')}</ul>`;
+    }
+  }
+
+  return `<div class="pin-subtitle">${esc(subtitle)}</div>`;
+}
+
+function splitLeadingNumber(title) {
+  const match = String(title || '').match(/^\s*(\d+)[\).:\-\s]*(.*)$/);
+  return match ? { number: match[1], title: match[2].trim() } : { number: '', title: title || '' };
 }
 
 // ─── Template CSS ─────────────────────────────────────────────────────────────
@@ -393,6 +467,30 @@ function buildTemplateStyle(templateId, recipe, textVars, w, h, overlay, accentC
       }
       .lower-card-inner { display: flex; flex-direction: column; text-align: ${align}; align-items: ${flexAlign}; width: 100%; }`;
 
+    case 'numbered_list_feature':
+      return `
+      .number-card {
+        position: absolute; left: 0; right: 0; bottom: 0;
+        min-height: ${layout.overlayHeight || '46%'};
+        background: ${overlayBg};
+        backdrop-filter: blur(${overlayBlur}); -webkit-backdrop-filter: blur(${overlayBlur});
+        z-index: 10;
+        display: grid;
+        grid-template-columns: minmax(180px, 0.34fr) 1fr;
+        align-items: center;
+        gap: 36px;
+        padding: ${Math.round(py * 1.05)}px ${px}px;
+        border-top: 1px solid rgba(15,23,42,0.08);
+      }
+      .number-mark { font-size: ${Math.max(150, Math.round(textVars.fontSize * 2.15))}px; }
+      .number-content {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        text-align: left;
+        min-width: 0;
+      }`;
+
     case 'left_editorial_column':
       return `
       .editorial-column {
@@ -405,6 +503,32 @@ function buildTemplateStyle(templateId, recipe, textVars, w, h, overlay, accentC
         ${edgeCSS}
       }
       .column-inner { display: flex; flex-direction: column; align-items: flex-start; width: 100%; }`;
+
+    case 'split_hero_editorial':
+      return `
+      .editorial-column {
+        position: absolute; top: 0; left: 0; bottom: 0; width: ${layout.sideWidth || '58%'};
+        background: ${overlayBg};
+        z-index: 10; display: flex; align-items: center;
+        padding: ${Math.round(py * 1.05)}px ${px}px;
+      }
+      .editorial-column::after {
+        content: '';
+        position: absolute;
+        top: 0; right: -1px; bottom: 0; width: 1px;
+        background: rgba(17,17,17,0.08);
+      }
+      .column-inner {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        width: min(92%, 460px);
+      }
+      .editorial-column .pin-title,
+      .editorial-column .pin-subtitle,
+      .editorial-column .pin-checklist {
+        max-width: 100%;
+      }`;
 
     case 'floating_soft_panel':
       const pRadius = layout.panelRadius || '32px';
@@ -421,6 +545,39 @@ function buildTemplateStyle(templateId, recipe, textVars, w, h, overlay, accentC
         ${edgeCSS}
       }
       .overlay-inner { display: flex; flex-direction: column; align-items: center; text-align: center; }`;
+
+    case 'checklist_card':
+      return `
+      .overlay-panel {
+        position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        width: min(88%, ${layout.panelWidth || '82%'});
+        background: ${overlayBg};
+        backdrop-filter: blur(${overlayBlur}); -webkit-backdrop-filter: blur(${overlayBlur});
+        border-radius: ${layout.panelRadius || borderRadius};
+        z-index: 10;
+        padding: ${Math.round(py * 1.2)}px ${Math.round(px * 1.1)}px;
+        box-shadow: 0 22px 70px rgba(15,23,42,0.18);
+        border: 1px solid rgba(15,23,42,0.10);
+      }
+      .overlay-inner { display: flex; flex-direction: column; align-items: flex-start; text-align: left; width: 100%; }
+      .pin-hrule { width: 64px; height: 2px; opacity: 0.22; }`;
+
+    case 'dark_glass_finance':
+      return `
+      .overlay-panel {
+        position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        width: min(86%, ${layout.panelWidth || '80%'});
+        background: ${overlayBg};
+        backdrop-filter: blur(${overlayBlur}); -webkit-backdrop-filter: blur(${overlayBlur});
+        border-radius: ${layout.panelRadius || borderRadius};
+        z-index: 10;
+        padding: ${Math.round(py * 1.35)}px ${Math.round(px * 1.15)}px;
+        box-shadow: 0 28px 90px rgba(0,0,0,0.35);
+        border: 1px solid rgba(216,180,106,0.34);
+      }
+      .overlay-inner { display: flex; flex-direction: column; align-items: flex-start; text-align: left; }
+      .pin-hrule { width: 72px; height: 1px; opacity: 0.72; }
+      .pin-badge { border-color: rgba(216,180,106,0.38); background: rgba(216,180,106,0.12); }`;
 
     case 'premium_article_cover':
       const articleGradient = overlay.type === 'fade'
@@ -508,6 +665,25 @@ function buildTemplateStyle(templateId, recipe, textVars, w, h, overlay, accentC
         width: ${layout.maxTitleWidth};
         display: flex; flex-direction: column; align-items: center; text-align: center;
       }`;
+
+    case 'bold_statement_poster':
+      return `
+      .poster-center {
+        position: absolute; inset: ${py}px ${px}px; z-index: 10;
+        display: flex; align-items: center; justify-content: center;
+        text-align: center;
+      }
+      .poster-inner {
+        width: ${layout.maxTitleWidth};
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        padding: ${Math.round(py * 0.5)}px 0;
+      }
+      .pin-title { text-transform: uppercase; }
+      .pin-category { opacity: 0.78; margin-bottom: ${Math.round(textVars.sectionGap * 0.6)}px; }
+      .pin-cta { background: rgba(255,255,255,0.10); }`;
 
 
     default:

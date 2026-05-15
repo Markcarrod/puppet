@@ -267,6 +267,7 @@ function scoreTemplates(analysis, titleText, templates) {
     if (suitableFor.includes('busy_center')   && analysis.busyZones.includes('center')) score += 20;
     if (suitableFor.includes('clean_right')   && analysis.hasCleanRight)         score += 18;
     if (suitableFor.includes('clean_left')    && analysis.hasCleanLeft)          score += 18;
+    if (suitableFor.includes('portrait_subjects') && (analysis.hasCleanLeft || analysis.hasCleanRight)) score += 8;
     if (suitableFor.includes('warm_tones')    && analysis.dominantColor.r > analysis.dominantColor.b) score += 8;
 
     // Mobile safe zone preference
@@ -288,6 +289,10 @@ function scoreTemplates(analysis, titleText, templates) {
     if (avoidWhen.includes('text_heavy')  && isLongTitle)                            score -= 15;
 
     if (tmpl.textPosition?.includes('center') && isLongTitle) score -= 10;
+    if (id === 'bold_statement_poster' && isShortTitle) score += 20;
+    if (id === 'checklist_card' && titleLen > 35) score += 8;
+    if (id === 'numbered_list_feature' && /^\s*\d+/.test(titleText || '')) score += 20;
+    if (id === 'dark_glass_finance' && analysis.isDark) score += 16;
     if (parseFloat(tmpl.maxTitleWidth) < 70   && isLongTitle) score -= 12;
     if (isShortTitle && tmpl.titleSizeMax >= 56)              score += 8;
 

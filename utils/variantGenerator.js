@@ -11,12 +11,17 @@ const OPACITY_VARIANTS = [0.72, 0.82, 0.90];
 const SPACING_VARIANTS = ['tight', 'normal', 'airy'];
 
 const TEMPLATE_PRIORITY = {
+  dark_glass_finance: 102,
   luxury_desk_headline: 100,
   center_white_sheet: 96,
   lower_third_card: 94,
   floating_soft_panel: 92,
+  split_hero_editorial: 90,
+  checklist_card: 88,
+  numbered_list_feature: 87,
   upper_third_overlay: 86,
   top_middle_headline: 82,
+  bold_statement_poster: 80,
   gradient_editorial: 78,
   premium_article_cover: 76,
   left_editorial_column: 72,
@@ -25,10 +30,10 @@ const TEMPLATE_PRIORITY = {
 };
 
 const GROUPS = {
-  tierA: ['luxury_desk_headline', 'center_white_sheet', 'lower_third_card', 'floating_soft_panel'],
+  tierA: ['dark_glass_finance', 'luxury_desk_headline', 'center_white_sheet', 'lower_third_card', 'floating_soft_panel'],
   upper: ['upper_third_overlay', 'top_middle_headline', 'luxury_desk_headline'],
-  white: ['center_white_sheet', 'lower_third_card', 'floating_soft_panel', 'soft_magazine'],
-  editorial: ['gradient_editorial', 'premium_article_cover', 'left_editorial_column', 'minimalist_gradient_poster'],
+  white: ['center_white_sheet', 'lower_third_card', 'floating_soft_panel', 'soft_magazine', 'checklist_card', 'numbered_list_feature'],
+  editorial: ['split_hero_editorial', 'gradient_editorial', 'premium_article_cover', 'left_editorial_column', 'minimalist_gradient_poster', 'bold_statement_poster'],
 };
 
 const { buildTextVars, qualityCheck } = require('./textEngine');
@@ -172,6 +177,12 @@ function scorePlacement(recipe, analysis) {
   if (position === 'center' && analysis.hasCleanCenter) score += 18;
   if (position === 'center' && analysis.centerVariance > 45 && !hasReadableBacking) score -= 24;
   if (position === 'left' && analysis.avoidGridCells?.some(c => c.endsWith('_0'))) score -= 26;
+  if (position === 'left' && analysis.hasCleanLeft) score += 16;
+  if (recipe.templateId === 'split_hero_editorial' && analysis.hasCleanLeft) score += 14;
+  if (recipe.templateId === 'dark_glass_finance' && analysis.isDark) score += 18;
+  if (recipe.templateId === 'checklist_card' && recipe.inputs.subtitle) score += 14;
+  if (recipe.templateId === 'numbered_list_feature' && /^\s*\d+/.test(recipe.inputs.title || '')) score += 18;
+  if (recipe.templateId === 'bold_statement_poster' && (recipe.inputs.title || '').length < 60) score += 16;
   if (analysis.isLight && recipe.layout.textColor === '#ffffff' && !hasReadableBacking) score -= 24;
   if (analysis.isDark && hasReadableBacking) score += 12;
 
@@ -232,6 +243,9 @@ function buildRecipe(template, inputs, analysis, size, overlayOpacity, spacing, 
       columnWidth: template.columnWidth,
       panelWidth: template.panelWidth,
       panelRadius: template.panelRadius,
+      sideWidth: template.sideWidth,
+      contentStyle: template.contentStyle,
+      accentColor: template.accentColor,
       colorPalette: template.colorPalette,
       showHRule: template.showHRule,
       coverLiftPx: template.coverLiftPx,
