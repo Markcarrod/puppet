@@ -1,6 +1,7 @@
 import os
 import platform
 import queue
+import re
 import shutil
 import signal
 import subprocess
@@ -18,6 +19,13 @@ OUTPUT_DIR = ROOT / "output"
 NODE_SCRIPT = ROOT / "scripts" / "batchRender.js"
 DEBUG_LOG = ROOT / "desktop_debug.log"
 SETTINGS_FILE = ROOT / "desktop_settings.json"
+APP_TITLE = "Pin Factory Desktop"
+
+PROGRESS_RE = re.compile(
+    r"Analyzed\s+(?P<analyzed>\d+)(?:/\d+)?\s+\|\s+Rendered\s+(?P<rendered>\d+)\s+\|\s+Failed\s+(?P<failed>\d+)\s+\|\s+Skipped\s+(?P<skipped>\d+)(?:\s+\|\s+(?P<extra>[^\r\n]*?))?(?=Analyzed|\Z)",
+    re.IGNORECASE,
+)
+MS_RE = re.compile(r"-\s*(\d+)ms\b", re.IGNORECASE)
 
 
 def write_debug(message):
@@ -34,7 +42,7 @@ def now_timestamp():
 class PinFactoryDesktop:
     def __init__(self, root):
         self.root = root
-        self.root.title("Pin Factory Desktop")
+        self.root.title(APP_TITLE)
         self.root.geometry("1180x820")
         self.root.minsize(980, 680)
         self.root.configure(bg="#101017")
@@ -42,6 +50,10 @@ class PinFactoryDesktop:
         self.log_queue = queue.Queue()
         self.process = None
         self.is_paused = False
+        self.title_bank_total = 0
+        self.last_completed_units = 0
+        self.render_ms_total = 0
+        self.render_ms_samples = 0
 
         self.images_dir = tk.StringVar()
         self.titles_file = tk.StringVar()
@@ -286,6 +298,9 @@ class PinFactoryDesktop:
             return
 
         self._save_settings()
+        self._reset_run_metrics()
+        self.title_bank_total = self._count_non_empty_lines(self.titles_file.get().strip())
+        self._refresh_window_title()
 
         cmd = [
             "node",
@@ -476,6 +491,7 @@ class PinFactoryDesktop:
         self.log_text.insert("end", text)
         self.log_text.see("end")
         write_debug(text)
+        self._ingest_progress_text(text)
 
     def _drain_log_queue(self):
         try:
@@ -486,11 +502,86 @@ class PinFactoryDesktop:
                     self.status_text.set("Done" if item[1] == 0 else "Failed")
                     self.is_paused = False
                     self.pause_button.configure(text="Pause", state="disabled")
+                    self._refresh_window_title(finished=True)
                 else:
                     self._append_log(item)
         except queue.Empty:
             pass
         self.root.after(120, self._drain_log_queue)
+
+    def _reset_run_metrics(self):
+        self.title_bank_total = 0
+        self.last_completed_units = 0
+        self.render_ms_total = 0
+        self.render_ms_samples = 0
+
+    def _count_non_empty_lines(self, file_path):
+        if not file_path:
+            return 0
+
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as handle:
+                return sum(1 for line in handle if line.strip())
+        except Exception as exc:
+            write_debug(f"Could not count titles in {file_path}: {exc}")
+            return 0
+
+    def _ingest_progress_text(self, text):
+        if not text:
+            return
+
+        normalized = text.replace("\r", "\n")
+        updated = False
+
+        for match in PROGRESS_RE.finditer(normalized):
+            rendered = int(match.group("rendered"))
+            failed = int(match.group("failed"))
+            skipped = int(match.group("skipped"))
+            completed_units = rendered + failed + skipped
+
+            extra = (match.group("extra") or "").strip()
+            ms_match = MS_RE.search(extra)
+            if ms_match and completed_units > self.last_completed_units:
+                self.render_ms_total += int(ms_match.group(1))
+                self.render_ms_samples += 1
+
+            if completed_units != self.last_completed_units:
+                self.last_completed_units = completed_units
+                updated = True
+
+        if updated:
+            self._refresh_window_title()
+
+    def _refresh_window_title(self, finished=False):
+        if finished:
+            self.root.title(APP_TITLE)
+            return
+
+        if self.title_bank_total <= 0:
+            self.root.title(APP_TITLE)
+            return
+
+        remaining = max(0, self.title_bank_total - self.last_completed_units)
+        title = f"Run Log - {remaining}"
+
+        if self.render_ms_samples > 0 and remaining > 0:
+            avg_ms = self.render_ms_total / max(1, self.render_ms_samples)
+            hours_left = (remaining * avg_ms) / 3600000
+            title = f"{title} - {self._format_hours_left(hours_left)} left"
+
+        self.root.title(title)
+
+    def _format_hours_left(self, hours_left):
+        if hours_left >= 10:
+            return f"{round(hours_left):.0f}hrs"
+        if hours_left >= 1:
+            rounded = round(hours_left, 1)
+            if abs(rounded - round(rounded)) < 0.05:
+                return f"{round(rounded):.0f}hrs"
+            return f"{rounded:.1f}hrs"
+
+        minutes_left = max(1, round(hours_left * 60))
+        return f"{minutes_left}mins"
 
     def _log_environment(self):
         node_path = shutil.which("node")
