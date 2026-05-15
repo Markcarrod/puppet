@@ -10,7 +10,7 @@
  * Options:
  *   --input       Path to JSON or CSV batch file
  *   --folder      Path to folder of images
- *   --titles      Path to .txt file (one title per line, or Title:code)
+ *   --titles      Path to .txt file (plain titles, Title:code, or subniche:niche|subniche:title:description|slug:imageId)
  *   --template    Template ID or "auto" (default: auto)
  *   --size        Pin size: standard|tall|square_ish|square (default: standard)
  *   --format      Output format: jpg|png|webp (default: jpg)
@@ -31,6 +31,7 @@ const { generateVariants } = require('../utils/variantGenerator');
 const { renderPin, closeBrowser } = require('../utils/renderer');
 
 const ROOT = path.join(__dirname, '..');
+const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp'];
 
 process.on('unhandledRejection', err => {
   console.error('\nUnhandled rejection:', err?.stack || err?.message || err);
@@ -70,7 +71,7 @@ async function runCoordinator(args) {
   console.log(`Mode: analyze -> render immediately | Host CPUs: ${os.cpus().length}\n`);
 
   if (workerCount === 1) {
-    const printer = createProgressPrinter(items.length);
+    const printer = createProgressPrinter(items.length, runtime.variantCount);
     const result = await runBatch(items, runtime, {
       onProgress: printer.onProgress,
       onSnapshot: printer.onSnapshot,
@@ -107,7 +108,7 @@ async function runWorker(args) {
 }
 
 async function runMultiProcessBatch(args, totalItems, workerCount, runtime) {
-  const printer = createProgressPrinter(totalItems);
+  const printer = createProgressPrinter(totalItems, runtime.variantCount);
   const children = [];
   const childSummaries = new Array(workerCount).fill(null);
   let completedWorkers = 0;
@@ -342,11 +343,14 @@ async function runBatch(items, runtime, hooks = {}) {
   return { analyzed, rendered, failed, skipped, producedAnyOutput };
 }
 
-function createProgressPrinter(totalItems) {
+function createProgressPrinter(totalItems, variantsPerItem = 1) {
   let analyzed = 0;
   let rendered = 0;
   let failed = 0;
   let skipped = 0;
+  const startedAt = Date.now();
+  const estimatedTotalRenders = Math.max(1, totalItems * Math.max(1, variantsPerItem));
+  let lastEtaMilestone = 0;
 
   return {
     onProgress(payload = {}) {
@@ -360,17 +364,65 @@ function createProgressPrinter(totalItems) {
       process.stdout.write(
         `\rAnalyzed ${analyzed}/${totalItems} | Rendered ${rendered} | Failed ${failed} | Skipped ${skipped} | ${pct}%${suffix}`
       );
+
+      const completedRenderUnits = rendered + failed + (skipped * Math.max(1, variantsPerItem));
+      const etaMilestone = Math.floor(completedRenderUnits / 1000);
+      if (etaMilestone > lastEtaMilestone) {
+        lastEtaMilestone = etaMilestone;
+        const eta = buildEtaSnapshot({
+          completed: completedRenderUnits,
+          total: estimatedTotalRenders,
+          startedAt,
+        });
+        if (eta) {
+          console.log(`\n[ETA] ${formatEta(eta)}`);
+        }
+      }
     },
     onSnapshot(snapshot = {}) {
       const rssMb = snapshot.rssMb ?? '?';
       const heapMb = snapshot.heapMb ?? '?';
       const cpuCount = snapshot.cpuCount ?? '?';
       console.log(`\n[Snapshot] ${snapshot.reason} | rss=${rssMb}MB heap=${heapMb}MB cpu=${cpuCount}`);
+      if (snapshot.eta) {
+        console.log(`[ETA] ${snapshot.eta}`);
+      }
     },
     finish() {
       process.stdout.write('\n');
     },
   };
+}
+
+function buildEtaSnapshot({ completed, total, startedAt }) {
+  if (completed <= 0 || total <= completed) return null;
+
+  const elapsedMs = Math.max(1, Date.now() - startedAt);
+  const avgMsPerItem = elapsedMs / completed;
+  const remainingItems = total - completed;
+  const remainingMs = remainingItems * avgMsPerItem;
+
+  return {
+    completed,
+    remainingItems,
+    elapsed: formatDuration(elapsedMs),
+    remaining: formatDuration(remainingMs),
+    hoursLeft: (remainingMs / 3600000).toFixed(2),
+    ratePerHour: Math.round((completed / elapsedMs) * 3600000),
+  };
+}
+
+function formatEta(snapshot) {
+  return `${snapshot.remainingItems} items left | about ${snapshot.remaining} (${snapshot.hoursLeft} hrs) | ${snapshot.ratePerHour}/hr | elapsed ${snapshot.elapsed}`;
+}
+
+function formatDuration(ms) {
+  const totalMinutes = Math.max(0, Math.round(ms / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours <= 0) return `${minutes}m`;
+  return `${hours}h ${String(minutes).padStart(2, '0')}m`;
 }
 
 function finalizeCoordinatorRun(summary, outputDir) {
@@ -480,14 +532,6 @@ function makeEmptySummary() {
 
 function loadFolderItems(folderPath, titlesFilePath) {
   const absFolder = path.isAbsolute(folderPath) ? folderPath : path.join(ROOT, folderPath);
-  const exts = ['.jpg', '.jpeg', '.png', '.webp'];
-  const images = fs.readdirSync(absFolder)
-    .filter(file => exts.includes(path.extname(file).toLowerCase()))
-    .map(file => path.join(absFolder, file));
-
-  if (images.length === 0) {
-    return [];
-  }
 
   let titles = [{ title: 'Untitled Pin', outputCode: null }];
   if (titlesFilePath) {
@@ -499,10 +543,21 @@ function loadFolderItems(folderPath, titlesFilePath) {
       .map(parseTitleBankLine);
   }
 
+  if (titles.some(title => title.format === 'niche_bank')) {
+    return buildNicheBankItems(absFolder, titles);
+  }
+
+  const images = listImages(absFolder);
+  if (images.length === 0) {
+    return [];
+  }
+
   const itemCount = Math.max(images.length, titles.length);
   return Array.from({ length: itemCount }, (_, index) => ({
     imagePath: images[index % images.length],
     title: titles[index % titles.length].title,
+    subtitle: titles[index % titles.length].subtitle,
+    category: titles[index % titles.length].category,
     outputCode: titles[index % titles.length].outputCode,
     outputSubfolder: titles[index % titles.length].outputSubfolder,
     sequenceNumber: index,
@@ -510,6 +565,9 @@ function loadFolderItems(folderPath, titlesFilePath) {
 }
 
 function parseTitleBankLine(line) {
+  const nicheBankItem = parseNicheBankLine(line);
+  if (nicheBankItem) return nicheBankItem;
+
   const firstColon = line.indexOf(':');
   const lastColon = line.lastIndexOf(':');
 
@@ -531,6 +589,111 @@ function parseTitleBankLine(line) {
   }
 
   return { outputSubfolder: null, title: line.trim() || 'Untitled Pin', outputCode: null };
+}
+
+function parseNicheBankLine(line) {
+  const parts = String(line).split('|');
+  if (parts.length < 3) return null;
+
+  const left = parts[0].trim();
+  const middle = parts[1].trim();
+  const right = parts.slice(2).join('|').trim();
+
+  const leftColon = left.indexOf(':');
+  const middleColon = middle.indexOf(':');
+  const rightColon = right.indexOf(':');
+  if (leftColon <= 0 || middleColon <= 0 || rightColon <= 0) return null;
+
+  const subniche = left.slice(0, leftColon).trim();
+  const niche = left.slice(leftColon + 1).trim();
+  const repeatedSubniche = middle.slice(0, middleColon).trim();
+  const titleAndDescription = middle.slice(middleColon + 1).trim();
+  const titleDescriptionColon = titleAndDescription.lastIndexOf(':');
+  if (!subniche || !niche || titleDescriptionColon <= 0) return null;
+
+  const title = titleAndDescription.slice(0, titleDescriptionColon).trim();
+  const subtitle = titleAndDescription.slice(titleDescriptionColon + 1).trim();
+  const outputCode = right.slice(0, rightColon).trim();
+  const imageKey = right.slice(rightColon + 1).trim();
+
+  return {
+    format: 'niche_bank',
+    subniche,
+    niche,
+    repeatedSubniche: repeatedSubniche || subniche,
+    title: title || 'Untitled Pin',
+    subtitle,
+    category: niche,
+    outputCode: outputCode || null,
+    outputSubfolder: path.join(niche, subniche),
+    imageKey: imageKey || null,
+  };
+}
+
+function buildNicheBankItems(absFolder, titles) {
+  const imageIndex = buildNicheImageIndex(absFolder);
+  const rotationByNiche = new Map();
+
+  return titles
+    .filter(title => title.format === 'niche_bank')
+    .map((title, index) => {
+      const images = getNicheImages(imageIndex, title.niche);
+      const imagePath = selectNicheImage(images, title.imageKey, title.niche, rotationByNiche);
+
+      return {
+        imagePath,
+        title: title.title,
+        subtitle: title.subtitle,
+        category: title.category,
+        outputCode: title.outputCode,
+        outputSubfolder: title.outputSubfolder,
+        sequenceNumber: index,
+      };
+    })
+    .filter(item => item && item.imagePath);
+}
+
+function buildNicheImageIndex(absFolder) {
+  const index = new Map();
+  const entries = fs.readdirSync(absFolder, { withFileTypes: true });
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const niche = entry.name;
+    const nichePath = path.join(absFolder, niche);
+    const images = listImages(nichePath);
+    index.set(niche, images);
+    index.set(niche.toLowerCase(), images);
+  }
+
+  return index;
+}
+
+function getNicheImages(imageIndex, niche) {
+  return imageIndex.get(niche) || imageIndex.get(String(niche).toLowerCase()) || [];
+}
+
+function selectNicheImage(images, imageKey, niche, rotationByNiche) {
+  if (images.length === 0) return null;
+
+  if (imageKey) {
+    const normalizedKey = path.parse(imageKey).name.toLowerCase();
+    const exact = images.find(image => path.parse(image).name.toLowerCase() === normalizedKey);
+    if (exact) return exact;
+  }
+
+  const rotationKey = String(niche).toLowerCase();
+  const nextIndex = rotationByNiche.get(rotationKey) || 0;
+  rotationByNiche.set(rotationKey, nextIndex + 1);
+  return images[nextIndex % images.length];
+}
+
+function listImages(folderPath) {
+  if (!fs.existsSync(folderPath)) return [];
+  return fs.readdirSync(folderPath)
+    .filter(file => IMAGE_EXTS.includes(path.extname(file).toLowerCase()))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+    .map(file => path.join(folderPath, file));
 }
 
 function applyTemplateRotation(variants, templateMode, previousTemplateId) {

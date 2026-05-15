@@ -125,6 +125,7 @@ For title-bank text files, use one of these formats:
 - `subfolder:title:code` to save the image as `output/subfolder/code.ext`
 - `title:code` to save the image as `output/code.ext`
 - `title` to render without a custom output code
+- `subniche:niche|subniche:title:description|slug:imageId` to select `folder/niche/imageId.*`, place the output in `output/niche/subniche/slug.ext`, and use `description` as the subtitle. If `imageId` is missing or not found, images in that niche folder rotate from the first image and restart when exhausted.
 `--concurrency` now controls real Node worker processes, so higher values can use more CPU cores at the cost of more RAM and more Chromium instances.
 
 ### Batch JSON format

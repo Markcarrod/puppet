@@ -83,7 +83,7 @@ class PinFactoryDesktop:
         ttk.Label(container, text="Pin Factory Desktop", style="Heading.TLabel").pack(anchor="w")
         ttk.Label(
             container,
-            text="Folder-based batch rendering with native pickers, flat image output, shared JSON metadata, and title banks (subfolder:title:code supported).",
+            text="Folder-based batch rendering with native pickers, flat image output, shared JSON metadata, and title banks (including niche folders).",
             style="Sub.TLabel",
         ).pack(anchor="w", pady=(2, 16))
 
@@ -261,7 +261,7 @@ class PinFactoryDesktop:
         self._append_log("Starting batch render...\n")
         self._append_log(f"Render mode: multi-process analyze -> render with {concurrency} worker processes\n")
         self._append_log("Output mode: images go to the selected folder, JSON goes to an output\\json folder\n")
-        self._append_log("Title bank format: subfolder:title:code -> image saves to subfolder\\code.ext and uses Title on the pin\n")
+        self._append_log("Title bank formats: subfolder:title:code or subniche:niche|subniche:title:description|slug:imageId\n")
         self._append_log(f"Debug log: {DEBUG_LOG}\n")
         self._append_log(" ".join(cmd) + "\n\n")
         write_debug(f"\n=== START {now_timestamp()} ===")
