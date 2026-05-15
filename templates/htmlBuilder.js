@@ -129,7 +129,9 @@ function buildPinHTML(recipe, imageDataUrl) {
     text-shadow: ${layout.textShadow !== 'none' ? layout.textShadow : 'none'};
     letter-spacing: ${titleTracking};
     max-width: ${layout.maxTitleWidth};
-    word-break: break-word;
+    word-break: normal;
+    overflow-wrap: normal;
+    hyphens: none;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     font-feature-settings: "liga" 1, "kern" 1;

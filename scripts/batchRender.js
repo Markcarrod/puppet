@@ -1088,7 +1088,7 @@ function parseNicheBankLine(line) {
 
   const title = titleAndDescription.slice(0, titleDescriptionColon).trim();
   const subtitle = titleAndDescription.slice(titleDescriptionColon + 1).trim();
-  const outputCode = right.slice(0, rightColon).trim();
+  const slugHint = right.slice(0, rightColon).trim();
   const imageKey = right.slice(rightColon + 1).trim();
 
   return {
@@ -1097,9 +1097,9 @@ function parseNicheBankLine(line) {
     niche,
     repeatedSubniche: repeatedSubniche || subniche,
     title: title || 'Untitled Pin',
-    subtitle,
-    category: niche,
-    outputCode: outputCode || null,
+    subtitle: '',
+    category: '',
+    outputCode: imageKey || slugHint || null,
     outputSubfolder: path.join(niche, subniche),
     imageKey: imageKey || null,
   };

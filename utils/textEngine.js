@@ -36,6 +36,7 @@ function calcFontSize(text, minSize, maxSize, maxWidthPx, avgCharWidth = 0.52) {
   const words = text.split(/\s+/).filter(Boolean);
   const wordCount = words.length;
   const len = text.length;
+  const longestWordLength = words.reduce((max, word) => Math.max(max, word.length), 0);
   
   // Rule: Aggressive Hero Expansion for short titles
   // If < 6 words, we want it to practically scream off the pin
@@ -70,7 +71,11 @@ function calcFontSize(text, minSize, maxSize, maxWidthPx, avgCharWidth = 0.52) {
     wordCount <= 12 ? Math.max(minSize, 72) :
     minSize;
 
-  return Math.min(maxSize, Math.max(strengthFloor, size));
+  const longestWordCeiling = longestWordLength
+    ? Math.floor(maxWidthPx / (longestWordLength * avgCharWidth * 1.08))
+    : maxSize;
+
+  return Math.min(maxSize, longestWordCeiling, Math.max(minSize, Math.max(strengthFloor, size)));
 }
 
 // ─── Smart line wrap ──────────────────────────────────────────────────────────
@@ -151,6 +156,41 @@ function greedyWrap(words, targetCharsPerLine) {
   return lines;
 }
 
+function hasBadWrap(lines) {
+  if (!Array.isArray(lines) || lines.length === 0) return false;
+  const lastLine = String(lines[lines.length - 1] || '').trim();
+  const smallestWord = lastLine.split(/\s+/).filter(Boolean).reduce((min, word) => Math.min(min, word.length), Infinity);
+  return (
+    lines.length > 5 ||
+    lastLine.length <= 3 ||
+    smallestWord === 1 ||
+    lines.some(line => line.trim().length <= 1)
+  );
+}
+
+function fitTitleLayout(title, minSize, maxSize, maxWidthPx, template) {
+  const avgW = 0.52;
+  const initialSize = calcFontSize(title || '', minSize, maxSize, maxWidthPx, avgW);
+  let fontSize = Math.min(maxSize, Math.round(initialSize * (template.titleScale || 1)));
+  let wrappedTitle = [];
+
+  while (fontSize >= minSize) {
+    const charsPerLine = Math.max(8, Math.floor(maxWidthPx / (fontSize * avgW)));
+    wrappedTitle = wrapText(title || '', charsPerLine);
+    if (!hasBadWrap(wrappedTitle)) {
+      return { fontSize, wrappedTitle };
+    }
+    fontSize -= 2;
+  }
+
+  const fallbackSize = minSize;
+  const fallbackCharsPerLine = Math.max(8, Math.floor(maxWidthPx / (fallbackSize * avgW)));
+  return {
+    fontSize: fallbackSize,
+    wrappedTitle: wrapText(title || '', fallbackCharsPerLine),
+  };
+}
+
 // ─── Hierarchy size enforcer ──────────────────────────────────────────────────
 // Ensures title → subtitle → CTA jumps are at least 4px apart,
 // and follows the preferred ratios: subtitle ≈ 42% of title, CTA ≈ 36%.
@@ -210,8 +250,8 @@ function buildTextVars(template, inputs, pinWidth, pinHeight, analysis) {
 
   const scaledMinSize = Math.round(titleSizeMin * TITLE_SCALE);
   const scaledMaxSize = Math.round(titleSizeMax * TITLE_SCALE);
-  const rawFontSize = calcFontSize(title || '', scaledMinSize, scaledMaxSize, maxWidthPx);
-  const fontSize = Math.min(scaledMaxSize, Math.round(rawFontSize * (template.titleScale || 1)));
+  const fittedTitle = fitTitleLayout(title || '', scaledMinSize, scaledMaxSize, maxWidthPx, template);
+  const fontSize = fittedTitle.fontSize;
 
   const { subtitleSize, ctaSize } = enforceHierarchy(fontSize);
   const categorySize = Math.max(12, Math.round(fontSize * 0.24));
@@ -220,8 +260,8 @@ function buildTextVars(template, inputs, pinWidth, pinHeight, analysis) {
 
   // Smart chars per line for wrapping
   const avgW = 0.52;
-  const charsPerLine = Math.floor(maxWidthPx / (fontSize * avgW));
-  const wrappedTitle    = wrapText(title || '', charsPerLine);
+  const charsPerLine = Math.max(8, Math.floor(maxWidthPx / (fontSize * avgW)));
+  const wrappedTitle    = fittedTitle.wrappedTitle;
   const wrappedSubtitle = subtitle ? wrapText(subtitle, Math.floor(charsPerLine * 1.4)) : [];
 
   // 8px-snapped spacing
