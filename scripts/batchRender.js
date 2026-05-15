@@ -62,7 +62,13 @@ async function runCoordinator(args) {
 
   console.log('\nPinterest Pin Factory - Batch CLI\n');
 
-  const totalItems = runtime.concurrency > 1 && !streamingWorkers
+  const shouldCountUpFront = Boolean(
+    args.titles ||
+    args.input ||
+    runtime.concurrency > 1 ||
+    streamingWorkers
+  );
+  const totalItems = shouldCountUpFront
     ? await countItemsFromArgs(args)
     : null;
   const items = streamingWorkers
@@ -79,6 +85,7 @@ async function runCoordinator(args) {
     ? Math.max(1, runtime.concurrency)
     : Math.max(1, Math.min(runtime.concurrency, itemCount));
   if (streamingWorkers) {
+    console.log(`Loaded ${itemCount} items`);
     console.log('Starting workers immediately in streaming mode');
   } else {
     console.log(`Loaded ${itemCount} items`);
@@ -605,8 +612,14 @@ function createProgressPrinter(totalItems, variantsPerItem = 1) {
       const heapMb = snapshot.heapMb ?? '?';
       const cpuCount = snapshot.cpuCount ?? '?';
       console.log(`\n[Snapshot] ${snapshot.reason} | rss=${rssMb}MB heap=${heapMb}MB cpu=${cpuCount}`);
-      if (snapshot.eta) {
-        console.log(`[ETA] ${snapshot.eta}`);
+      const completedRenderUnits = rendered + failed + (skipped * Math.max(1, variantsPerItem));
+      const eta = snapshot.eta || formatEta(buildEtaSnapshot({
+        completed: completedRenderUnits,
+        total: estimatedTotalRenders,
+        startedAt,
+      }));
+      if (eta) {
+        console.log(`[ETA] ${eta}`);
       }
     },
     finish() {
@@ -630,11 +643,14 @@ function buildEtaSnapshot({ completed, total, startedAt }) {
     remaining: formatDuration(remainingMs),
     hoursLeft: (remainingMs / 3600000).toFixed(2),
     ratePerHour: Math.round((completed / elapsedMs) * 3600000),
+    avgMsPerItem: Math.round(avgMsPerItem),
+    completed,
+    total,
   };
 }
 
 function formatEta(snapshot) {
-  return `${snapshot.remainingItems} items left | about ${snapshot.remaining} (${snapshot.hoursLeft} hrs) | ${snapshot.ratePerHour}/hr | elapsed ${snapshot.elapsed}`;
+  return `${snapshot.completed}/${snapshot.total} done | ${snapshot.remainingItems} left | about ${snapshot.remaining} (${snapshot.hoursLeft} hrs) | avg ${snapshot.avgMsPerItem}ms | ${snapshot.ratePerHour}/hr | elapsed ${snapshot.elapsed}`;
 }
 
 function formatDuration(ms) {
