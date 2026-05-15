@@ -66,6 +66,7 @@ class PinFactoryDesktop:
         self.variants = tk.StringVar(value="1")
         self.concurrency = tk.StringVar(value="5")
         self.resume_existing = tk.BooleanVar(value=True)
+        self.log_title_text = tk.StringVar(value="Run Log")
         self.status_text = tk.StringVar(value="Ready")
 
         self._load_settings()
@@ -236,7 +237,7 @@ class PinFactoryDesktop:
     def _make_log_card(self, parent):
         card = ttk.Frame(parent, style="Card.TFrame", padding=16)
         card.pack(fill="both", expand=True)
-        ttk.Label(card, text="Run Log", style="CardTitle.TLabel").pack(anchor="w", pady=(0, 10))
+        ttk.Label(card, textvariable=self.log_title_text, style="CardTitle.TLabel").pack(anchor="w", pady=(0, 10))
 
         self.log_text = tk.Text(
             card,
@@ -555,10 +556,12 @@ class PinFactoryDesktop:
     def _refresh_window_title(self, finished=False):
         if finished:
             self.root.title(APP_TITLE)
+            self.log_title_text.set("Run Log")
             return
 
         if self.title_bank_total <= 0:
             self.root.title(APP_TITLE)
+            self.log_title_text.set("Run Log")
             return
 
         remaining = max(0, self.title_bank_total - self.last_completed_units)
@@ -570,6 +573,7 @@ class PinFactoryDesktop:
             title = f"{title} - {self._format_hours_left(hours_left)} left"
 
         self.root.title(title)
+        self.log_title_text.set(title)
 
     def _format_hours_left(self, hours_left):
         if hours_left >= 10:
