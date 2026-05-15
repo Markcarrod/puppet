@@ -98,7 +98,7 @@ const TEMPLATE_FAMILIES = {
     textColor: '#ffffff',
     textPosition: 'upper',
     textAlign: 'left',
-    maxTitleWidth: '75%',
+    maxTitleWidth: '55%',
     titleSizeMin: 38,
     titleSizeMax: 88,
     padding: { x: 60, y: 80 },

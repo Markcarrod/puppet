@@ -80,18 +80,19 @@ function calcFontSize(text, minSize, maxSize, maxWidthPx, avgCharWidth = 0.52) {
 
 // ─── Smart line wrap ──────────────────────────────────────────────────────────
 
-function wrapText(text, targetCharsPerLine = 18) {
+function wrapText(text, targetCharsPerLine = 18, options = {}) {
   if (!text) return [];
   const words = text.split(/\s+/).filter(Boolean);
   const wordCount = words.length;
   if (wordCount <= 1) return words;
 
-  const preferredCounts = text.length <= 58 ? [2, 3] : [3, 2, 4];
+  const preferredCounts = options.preferredCounts || (text.length <= 58 ? [2, 3] : [3, 2, 4]);
   let best = null;
 
   for (const count of preferredCounts) {
     if (count > wordCount) continue;
-    const candidate = bestBalancedLines(words, count, targetCharsPerLine);
+    if (options.maxLines && count > options.maxLines) continue;
+    const candidate = bestBalancedLines(words, count, targetCharsPerLine, options);
     if (!candidate) continue;
     if (!best || candidate.score < best.score) best = candidate;
   }
@@ -99,7 +100,7 @@ function wrapText(text, targetCharsPerLine = 18) {
   return best ? best.lines : greedyWrap(words, targetCharsPerLine);
 }
 
-function bestBalancedLines(words, lineCount, targetCharsPerLine) {
+function bestBalancedLines(words, lineCount, targetCharsPerLine, options = {}) {
   const partitions = [];
 
   function walk(start, remaining, current) {
@@ -115,7 +116,10 @@ function bestBalancedLines(words, lineCount, targetCharsPerLine) {
 
   walk(0, lineCount, []);
 
-  const target = Math.max(targetCharsPerLine, Math.ceil(words.join(' ').length / lineCount));
+  const averageLineLength = Math.ceil(words.join(' ').length / lineCount);
+  const target = options.strictTarget
+    ? Math.max(targetCharsPerLine, Math.floor(averageLineLength * 0.88))
+    : Math.max(targetCharsPerLine, averageLineLength);
   let best = null;
 
   for (const lines of partitions) {
@@ -127,12 +131,15 @@ function bestBalancedLines(words, lineCount, targetCharsPerLine) {
 
     score += (longest - shortest) * 3;
     score += Math.abs(longest - target) * 1.5;
-    if (lineCount === 2) score -= 8;
-    if (lineCount === 3) score -= 4;
+    if (lineCount === 2) score -= options.preferThreeToFour ? 2 : 8;
+    if (lineCount === 3) score -= options.preferThreeToFour ? 20 : 4;
+    if (lineCount === 4 && options.preferThreeToFour) score -= 12;
     if (shortest < 9) score += 20;
-    if (lengths.some(len => len > target * 1.75)) score += 18;
+    if (lines.some(line => line.trim().split(/\s+/).length === 1) && lineCount > 2) score += options.strictTarget ? 12 : 0;
+    if (lengths.some(len => len > target * (options.strictTarget ? 1.28 : 1.75))) score += options.strictTarget ? 30 : 18;
     if (lastWords.some(word => BREAK_STOP_WORDS.has(word))) score += 16;
     if (lines.at(-1).split(/\s+/).length === 1) score += 28;
+    if (options.maxLines && lineCount > options.maxLines) score += 80;
 
     if (!best || score < best.score) best = { lines, score };
   }
@@ -156,12 +163,13 @@ function greedyWrap(words, targetCharsPerLine) {
   return lines;
 }
 
-function hasBadWrap(lines) {
+function hasBadWrap(lines, options = {}) {
   if (!Array.isArray(lines) || lines.length === 0) return false;
   const lastLine = String(lines[lines.length - 1] || '').trim();
   const smallestWord = lastLine.split(/\s+/).filter(Boolean).reduce((min, word) => Math.min(min, word.length), Infinity);
+  const maxLines = options.maxLines || 5;
   return (
-    lines.length > 5 ||
+    lines.length > maxLines ||
     lastLine.length <= 3 ||
     smallestWord === 1 ||
     lines.some(line => line.trim().length <= 1)
@@ -170,24 +178,51 @@ function hasBadWrap(lines) {
 
 function fitTitleLayout(title, minSize, maxSize, maxWidthPx, template) {
   const avgW = 0.52;
-  const initialSize = calcFontSize(title || '', minSize, maxSize, maxWidthPx, avgW);
+  const scaleMode = getTitleScaleMode(template);
+  const effectiveMinSize = scaleMode ? Math.max(minSize, scaleMode.minSize) : minSize;
+  const effectiveMaxSize = scaleMode ? Math.min(maxSize, scaleMode.maxSize) : maxSize;
+  const initialSize = calcFontSize(title || '', effectiveMinSize, effectiveMaxSize, maxWidthPx, avgW);
   let fontSize = Math.min(maxSize, Math.round(initialSize * (template.titleScale || 1)));
   let wrappedTitle = [];
+  if (scaleMode) fontSize = Math.min(scaleMode.maxSize, Math.max(scaleMode.minSize, fontSize));
 
-  while (fontSize >= minSize) {
+  while (fontSize >= effectiveMinSize) {
     const charsPerLine = Math.max(8, Math.floor(maxWidthPx / (fontSize * avgW)));
-    wrappedTitle = wrapText(title || '', charsPerLine);
-    if (!hasBadWrap(wrappedTitle)) {
+    wrappedTitle = wrapText(title || '', charsPerLine, scaleMode?.wrapOptions);
+    if (!hasBadWrap(wrappedTitle, scaleMode?.wrapOptions)) {
       return { fontSize, wrappedTitle };
     }
     fontSize -= 2;
   }
 
-  const fallbackSize = minSize;
+  const fallbackSize = effectiveMinSize;
   const fallbackCharsPerLine = Math.max(8, Math.floor(maxWidthPx / (fallbackSize * avgW)));
   return {
     fontSize: fallbackSize,
-    wrappedTitle: wrapText(title || '', fallbackCharsPerLine),
+    wrappedTitle: wrapText(title || '', fallbackCharsPerLine, scaleMode?.wrapOptions),
+  };
+}
+
+function getTitleScaleMode(template) {
+  const templateId = template.fontPreset || template.id || template.templateId;
+  const directScaleTemplates = new Set([
+    'upper_third_overlay',
+    'top_middle_headline',
+    'minimalist_gradient_poster',
+    'bold_statement_poster',
+  ]);
+
+  if (!directScaleTemplates.has(templateId)) return null;
+
+  return {
+    minSize: 58,
+    maxSize: 78,
+    wrapOptions: {
+      preferredCounts: [3, 4, 2],
+      maxLines: 4,
+      strictTarget: true,
+      preferThreeToFour: true,
+    },
   };
 }
 
@@ -308,8 +343,10 @@ function buildTextVars(template, inputs, pinWidth, pinHeight, analysis) {
 function qualityCheck(textVars, template, analysis) {
   const warnings = [];
 
-  if (textVars.titleLines > 5)
-    warnings.push({ type: 'overflow',     msg: 'Title may overflow: too many lines (>5)' });
+  const scaleMode = getTitleScaleMode(template);
+  const maxTitleLines = scaleMode?.wrapOptions?.maxLines || 5;
+  if (textVars.titleLines > maxTitleLines)
+    warnings.push({ type: 'overflow',     msg: `Title may overflow: too many lines (>${maxTitleLines})` });
 
   if (textVars.fontSize < 24)
     warnings.push({ type: 'readability',  msg: 'Font size very small — may be hard to read on mobile' });
