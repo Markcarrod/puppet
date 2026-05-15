@@ -58,22 +58,31 @@ async function main() {
 
 async function runCoordinator(args) {
   const runtime = buildRuntimeOptions(args);
+  const streamingWorkers = shouldUseStreamingWorkers(args, runtime);
 
   console.log('\nPinterest Pin Factory - Batch CLI\n');
 
-  const totalItems = runtime.concurrency > 1
+  const totalItems = runtime.concurrency > 1 && !streamingWorkers
     ? await countItemsFromArgs(args)
     : null;
-  const items = totalItems === null ? await loadItemsFromArgs(args) : null;
-  const itemCount = totalItems ?? items.length;
+  const items = streamingWorkers
+    ? null
+    : (totalItems === null ? await loadItemsFromArgs(args) : null);
+  const itemCount = totalItems ?? (items ? items.length : 0);
 
-  if (itemCount === 0) {
+  if (!streamingWorkers && itemCount === 0) {
     console.error('No items to render');
     process.exit(1);
   }
 
-  const workerCount = Math.max(1, Math.min(runtime.concurrency, itemCount));
-  console.log(`Loaded ${itemCount} items`);
+  const workerCount = streamingWorkers
+    ? Math.max(1, runtime.concurrency)
+    : Math.max(1, Math.min(runtime.concurrency, itemCount));
+  if (streamingWorkers) {
+    console.log('Starting workers immediately in streaming mode');
+  } else {
+    console.log(`Loaded ${itemCount} items`);
+  }
   console.log(`Template: ${runtime.templateMode} | Size: ${runtime.pinSize} | Format: ${runtime.outputFormat} | Quality: ${runtime.outputQuality}`);
   console.log(`Variants per item: ${runtime.variantCount} | Worker processes: ${workerCount}`);
   console.log(`Mode: analyze -> render immediately | Host CPUs: ${os.cpus().length}\n`);
@@ -99,6 +108,15 @@ async function runWorker(args) {
   const runtime = buildRuntimeOptions(args);
   const workerIndex = Math.max(0, parseInt(args.workerIndex, 10) || 0);
   const workerCount = Math.max(1, parseInt(args.workerCount, 10) || 1);
+  if (shouldUseStreamingWorkers(args, runtime)) {
+    const summary = await runStreamingFolderBatch(args, runtime, { workerIndex, workerCount }, {
+      onProgress: payload => sendWorkerMessage({ type: 'progress', payload }),
+      onSnapshot: payload => sendWorkerMessage({ type: 'snapshot', payload }),
+      log: message => sendWorkerMessage({ type: 'log', message }),
+    });
+    sendWorkerMessage({ type: 'done', summary });
+    return;
+  }
   const items = await loadItemsFromArgs(args, { workerIndex, workerCount });
 
   if (items.length === 0) {
@@ -383,6 +401,173 @@ async function runBatch(items, runtime, hooks = {}) {
   return { analyzed, rendered, failed, skipped, producedAnyOutput };
 }
 
+function shouldUseStreamingWorkers(args, runtime) {
+  return Boolean(runtime.concurrency > 1 && args.folder && args.titles && args.imageList);
+}
+
+async function runStreamingFolderBatch(args, runtime, shard, hooks = {}) {
+  const absFolder = path.isAbsolute(args.folder) ? args.folder : path.join(ROOT, args.folder);
+  const absTitle = path.isAbsolute(args.titles) ? args.titles : path.join(ROOT, args.titles);
+  const absImageList = path.isAbsolute(args.imageList) ? args.imageList : path.join(ROOT, args.imageList);
+  const imageManifest = await loadImageListManifest(absFolder, absImageList);
+  const runner = createStreamingBatchRunner(runtime, hooks);
+  const reader = readline.createInterface({
+    input: fs.createReadStream(absTitle, { encoding: 'utf8' }),
+    crlfDelay: Infinity,
+  });
+
+  let lineIndex = 0;
+  try {
+    for await (const rawLine of reader) {
+      const line = rawLine.trim();
+      if (!line) {
+        lineIndex++;
+        continue;
+      }
+      const sourceIndex = lineIndex++;
+      if (sourceIndex % shard.workerCount !== shard.workerIndex) {
+        continue;
+      }
+
+      const parsed = { ...parseTitleBankLine(line), sourceIndex };
+      const item = resolveStreamedItemFromManifest(parsed, imageManifest);
+      if (!item) {
+        continue;
+      }
+      await runner.processItem(item);
+    }
+  } finally {
+    await closeBrowser();
+  }
+
+  return runner.summary();
+}
+
+function createStreamingBatchRunner(runtime, hooks = {}) {
+  const {
+    templateMode,
+    pinSize,
+    variantCount,
+    outputFormat,
+    outputQuality,
+    outputDir,
+    resume,
+  } = runtime;
+  const onProgress = hooks.onProgress || (() => {});
+  const onSnapshot = hooks.onSnapshot || (() => {});
+  const log = hooks.log || (() => {});
+
+  let analyzed = 0;
+  let rendered = 0;
+  let failed = 0;
+  let skipped = 0;
+  let producedAnyOutput = false;
+  let lastTemplateId = null;
+
+  return {
+    async processItem(item) {
+      const { imagePath, title, subtitle, cta, badge, linkLabel, category, outputCode, outputSubfolder, sequenceNumber } = item;
+      const safeOutputSubfolder = sanitizeOutputSubfolder(outputSubfolder);
+      const imageOutputDir = safeOutputSubfolder ? path.join(outputDir, safeOutputSubfolder) : outputDir;
+      const jsonDir = safeOutputSubfolder
+        ? path.join(outputDir, 'json', safeOutputSubfolder)
+        : path.join(outputDir, 'json');
+
+      if (resume && outputCode) {
+        const existingOutputPath = path.join(imageOutputDir, `${outputCode}.${outputFormat}`);
+        if (fs.existsSync(existingOutputPath)) {
+          skipped++;
+          producedAnyOutput = true;
+          onProgress({ analyzedDelta: 0, renderedDelta: 0, failedDelta: 0, skippedDelta: 1, extra: `exists - ${path.basename(existingOutputPath)}` });
+          return;
+        }
+      }
+
+      if (!fs.existsSync(imagePath)) {
+        skipped++;
+        onProgress({ analyzedDelta: 0, renderedDelta: 0, failedDelta: 0, skippedDelta: 1, extra: `missing - ${path.basename(imagePath)}` });
+        return;
+      }
+
+      let analysis;
+      try {
+        analysis = await analyzeImage(imagePath);
+        analyzed++;
+        onProgress({ analyzedDelta: 1, renderedDelta: 0, failedDelta: 0, skippedDelta: 0, extra: `analysis complete - ${path.basename(imagePath)}` });
+      } catch (err) {
+        analyzed++;
+        failed++;
+        onProgress({ analyzedDelta: 1, renderedDelta: 0, failedDelta: 1, skippedDelta: 0, extra: `analysis failed - ${path.basename(imagePath)}` });
+        log(`Analysis failed for ${imagePath}: ${err.message}`);
+        return;
+      }
+
+      const inputs = { title, subtitle, cta, badge, linkLabel, category };
+      let variants = generateVariants(analysis, inputs, {
+        maxVariants: variantCount,
+        templateMode,
+        pinSize,
+      });
+
+      if (outputCode && variants.length > 1) {
+        variants = [variants[0]];
+      }
+
+      const baseName = path.parse(imagePath).name;
+      const selectedVariants = applyTemplateRotation(variants, templateMode, lastTemplateId);
+      const sequenceSuffix = Number.isInteger(sequenceNumber)
+        ? `_${String(sequenceNumber + 1).padStart(6, '0')}`
+        : '';
+
+      for (const recipe of selectedVariants) {
+        lastTemplateId = recipe.templateId;
+        const exactFilename = outputCode
+          ? `${outputCode}.${outputFormat}`
+          : `${baseName}${sequenceSuffix}_${recipe.templateId}_${slugify(recipe.variantId)}.${outputFormat}`;
+        const metaFilename = outputCode
+          ? `${outputCode}.json`
+          : `${baseName}${sequenceSuffix}_${recipe.templateId}_${slugify(recipe.variantId)}.json`;
+        const outputPath = path.join(imageOutputDir, exactFilename);
+        const metaOutputPath = path.join(jsonDir, metaFilename);
+
+        if (resume && fs.existsSync(outputPath)) {
+          skipped++;
+          producedAnyOutput = true;
+          onProgress({ analyzedDelta: 0, renderedDelta: 0, failedDelta: 0, skippedDelta: 1, extra: `exists - ${path.basename(outputPath)}` });
+          continue;
+        }
+
+        try {
+          const result = await renderPin(recipe, imagePath, outputPath, {
+            format: outputFormat,
+            quality: outputQuality,
+            metaOutputPath,
+          });
+          rendered++;
+          producedAnyOutput = true;
+          onProgress({ analyzedDelta: 0, renderedDelta: 1, failedDelta: 0, skippedDelta: 0, extra: `${path.basename(result.outputPath)} - ${result.renderTime}ms` });
+          if (rendered % 25 === 0) {
+            const mem = process.memoryUsage();
+            onSnapshot({
+              reason: `${rendered} renders completed`,
+              rssMb: Math.round(mem.rss / 1024 / 1024),
+              heapMb: Math.round(mem.heapUsed / 1024 / 1024),
+              cpuCount: os.cpus().length,
+            });
+          }
+        } catch (err) {
+          failed++;
+          onProgress({ analyzedDelta: 0, renderedDelta: 0, failedDelta: 1, skippedDelta: 0, extra: `render failed - ${path.basename(imagePath)}` });
+          log(`Render failed for ${path.basename(imagePath)}: ${err.message}`);
+        }
+      }
+    },
+    summary() {
+      return { analyzed, rendered, failed, skipped, producedAnyOutput };
+    },
+  };
+}
+
 function createProgressPrinter(totalItems, variantsPerItem = 1) {
   let analyzed = 0;
   let rendered = 0;
@@ -399,10 +584,12 @@ function createProgressPrinter(totalItems, variantsPerItem = 1) {
       failed += payload.failedDelta || 0;
       skipped += payload.skippedDelta || 0;
       const processed = analyzed + skipped;
-      const pct = totalItems ? Math.round((processed / totalItems) * 100) : 100;
+      const pct = totalItems ? Math.round((processed / totalItems) * 100) : null;
       const suffix = payload.extra ? ` | ${payload.extra}` : '';
       process.stdout.write(
-        `\rAnalyzed ${analyzed}/${totalItems} | Rendered ${rendered} | Failed ${failed} | Skipped ${skipped} | ${pct}%${suffix}`
+        totalItems
+          ? `\rAnalyzed ${analyzed}/${totalItems} | Rendered ${rendered} | Failed ${failed} | Skipped ${skipped} | ${pct}%${suffix}`
+          : `\rAnalyzed ${analyzed} | Rendered ${rendered} | Failed ${failed} | Skipped ${skipped}${suffix}`
       );
 
       const completedRenderUnits = rendered + failed + (skipped * Math.max(1, variantsPerItem));
@@ -712,6 +899,15 @@ async function loadImageListItems(absFolder, filePath, shard = null) {
   return items;
 }
 
+async function loadImageListManifest(absFolder, filePath) {
+  const images = await loadImageListItems(absFolder, filePath, null);
+  return {
+    images,
+    imageIndex: buildImageListIndex(images),
+    imageBySourceIndex: new Map(images.map(image => [image.sourceIndex, image])),
+  };
+}
+
 function buildImageListItems(absFolder, titles, images) {
   if (titles.some(title => title.format === 'niche_bank')) {
     const imageIndex = buildImageListIndex(images);
@@ -766,6 +962,37 @@ function buildImageListItems(absFolder, titles, images) {
     outputSubfolder: titles[index % titles.length].outputSubfolder,
     sequenceNumber: image.sourceIndex,
   }));
+}
+
+function resolveStreamedItemFromManifest(title, manifest) {
+  const sourceIndex = title.sourceIndex ?? 0;
+
+  if (title.format === 'niche_bank') {
+    const nicheImages = getNicheImages(manifest.imageIndex, title.niche);
+    const imagePath = selectNicheImage(nicheImages, title.imageKey, sourceIndex);
+    if (!imagePath) return null;
+    return {
+      imagePath,
+      title: title.title,
+      subtitle: title.subtitle,
+      category: title.category,
+      outputCode: title.outputCode,
+      outputSubfolder: title.outputSubfolder,
+      sequenceNumber: sourceIndex,
+    };
+  }
+
+  const image = manifest.imageBySourceIndex.get(sourceIndex) || manifest.images[sourceIndex % Math.max(1, manifest.images.length)];
+  if (!image) return null;
+  return {
+    imagePath: image.imagePath,
+    title: title.title,
+    subtitle: title.subtitle,
+    category: title.category,
+    outputCode: title.outputCode,
+    outputSubfolder: title.outputSubfolder,
+    sequenceNumber: sourceIndex,
+  };
 }
 
 function resolveImageListPath(absFolder, value) {
