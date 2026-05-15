@@ -544,6 +544,24 @@ function buildTemplateStyle(templateId, recipe, textVars, w, h, overlay, accentC
   switch (templateId) {
 
     case 'upper_third_overlay':
+      if (overlay.type === 'sheet') {
+        return `
+      .text-zone {
+        position: absolute; top: 0; left: 0; right: 0;
+        z-index: 10; text-align: ${align};
+        display: flex; flex-direction: column; align-items: ${flexAlign};
+        min-height: 42%;
+        padding: ${Math.round(py * 1.15)}px ${px}px ${Math.round(py * 0.95)}px;
+        background: ${overlayBg};
+        backdrop-filter: blur(${overlayBlur}); -webkit-backdrop-filter: blur(${overlayBlur});
+        border-bottom: 1px solid rgba(17,17,17,0.08);
+      }
+      .text-zone .pin-title,
+      .text-zone .pin-subtitle,
+      .text-zone .pin-checklist {
+        max-width: min(92%, ${layout.maxTitleWidth});
+      }`;
+      }
       return `
       .text-zone {
         position: absolute; top: ${py}px; left: ${px}px; right: ${px}px;
@@ -553,6 +571,24 @@ function buildTemplateStyle(templateId, recipe, textVars, w, h, overlay, accentC
       }`;
 
     case 'top_middle_headline':
+      if (overlay.type === 'sheet') {
+        return `
+      .text-zone {
+        position: absolute; top: 0; left: 0; right: 0;
+        z-index: 10; text-align: center;
+        display: flex; flex-direction: column; align-items: center;
+        min-height: 40%;
+        padding: ${Math.round(py * 1.12)}px ${px}px ${Math.round(py * 0.9)}px;
+        background: ${overlayBg};
+        backdrop-filter: blur(${overlayBlur}); -webkit-backdrop-filter: blur(${overlayBlur});
+        border-bottom: 1px solid rgba(17,17,17,0.08);
+      }
+      .text-zone .pin-title,
+      .text-zone .pin-subtitle,
+      .text-zone .pin-checklist {
+        max-width: min(92%, ${layout.maxTitleWidth});
+      }`;
+      }
       return `
       .text-zone {
         position: absolute; top: ${py}px; left: 50%; transform: translateX(-50%);
