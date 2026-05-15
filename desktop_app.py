@@ -10,6 +10,7 @@ import threading
 import traceback
 import json
 import tkinter as tk
+from collections import deque
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -52,8 +53,10 @@ class PinFactoryDesktop:
         self.is_paused = False
         self.title_bank_total = 0
         self.last_completed_units = 0
-        self.render_ms_total = 0
-        self.render_ms_samples = 0
+        self.recent_render_ms = deque(maxlen=10)
+        self.last_eta_hours = None
+        self.last_eta_thousand_mark = 0
+        self.initial_eta_ready = False
 
         self.images_dir = tk.StringVar()
         self.titles_file = tk.StringVar()
@@ -513,8 +516,10 @@ class PinFactoryDesktop:
     def _reset_run_metrics(self):
         self.title_bank_total = 0
         self.last_completed_units = 0
-        self.render_ms_total = 0
-        self.render_ms_samples = 0
+        self.recent_render_ms.clear()
+        self.last_eta_hours = None
+        self.last_eta_thousand_mark = 0
+        self.initial_eta_ready = False
 
     def _count_non_empty_lines(self, file_path):
         if not file_path:
@@ -543,15 +548,36 @@ class PinFactoryDesktop:
             extra = (match.group("extra") or "").strip()
             ms_match = MS_RE.search(extra)
             if ms_match and completed_units > self.last_completed_units:
-                self.render_ms_total += int(ms_match.group(1))
-                self.render_ms_samples += 1
+                self.recent_render_ms.append(int(ms_match.group(1)))
 
             if completed_units != self.last_completed_units:
                 self.last_completed_units = completed_units
+                self._maybe_refresh_eta_estimate(completed_units)
                 updated = True
 
         if updated:
             self._refresh_window_title()
+
+    def _maybe_refresh_eta_estimate(self, completed_units):
+        if len(self.recent_render_ms) < 10 or self.title_bank_total <= 0:
+            return
+
+        should_refresh = False
+        if not self.initial_eta_ready and completed_units >= 10:
+            self.initial_eta_ready = True
+            should_refresh = True
+
+        thousand_mark = completed_units // 1000
+        if completed_units >= 1000 and thousand_mark > self.last_eta_thousand_mark:
+            self.last_eta_thousand_mark = thousand_mark
+            should_refresh = True
+
+        if not should_refresh:
+            return
+
+        remaining = max(0, self.title_bank_total - completed_units)
+        avg_ms = sum(self.recent_render_ms) / len(self.recent_render_ms)
+        self.last_eta_hours = (remaining * avg_ms) / 3600000 if remaining > 0 else 0
 
     def _refresh_window_title(self, finished=False):
         if finished:
@@ -567,10 +593,8 @@ class PinFactoryDesktop:
         remaining = max(0, self.title_bank_total - self.last_completed_units)
         title = "Run Log"
 
-        if self.render_ms_samples > 0 and remaining > 0:
-            avg_ms = self.render_ms_total / max(1, self.render_ms_samples)
-            hours_left = (remaining * avg_ms) / 3600000
-            title = f"{title} - {self._format_hours_left(hours_left)} remain"
+        if self.last_eta_hours is not None and remaining > 0:
+            title = f"{title} - {self._format_hours_left(self.last_eta_hours)} remain"
         elif remaining > 0:
             title = f"{title} - calculating..."
 
