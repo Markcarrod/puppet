@@ -34,8 +34,8 @@ class PinFactoryDesktop:
     def __init__(self, root):
         self.root = root
         self.root.title("Pin Factory Desktop")
-        self.root.geometry("860x700")
-        self.root.minsize(760, 620)
+        self.root.geometry("1180x820")
+        self.root.minsize(980, 680)
         self.root.configure(bg="#101017")
 
         self.log_queue = queue.Queue()
@@ -69,17 +69,18 @@ class PinFactoryDesktop:
 
         style.configure("Root.TFrame", background="#101017")
         style.configure("Card.TFrame", background="#181822")
-        style.configure("Heading.TLabel", background="#101017", foreground="#f4f4fa", font=("Segoe UI", 20, "bold"))
-        style.configure("Sub.TLabel", background="#101017", foreground="#9d9db6", font=("Segoe UI", 10))
+        style.configure("Heading.TLabel", background="#101017", foreground="#f4f4fa", font=("Segoe UI", 18, "bold"))
+        style.configure("Sub.TLabel", background="#101017", foreground="#9d9db6", font=("Segoe UI", 9))
         style.configure("CardTitle.TLabel", background="#181822", foreground="#f4f4fa", font=("Segoe UI", 11, "bold"))
-        style.configure("Body.TLabel", background="#181822", foreground="#d6d6e6", font=("Segoe UI", 10))
+        style.configure("Body.TLabel", background="#181822", foreground="#d6d6e6", font=("Segoe UI", 9))
         style.configure("Meta.TLabel", background="#181822", foreground="#9d9db6", font=("Segoe UI", 9))
         style.configure("Status.TLabel", background="#101017", foreground="#b7b7cd", font=("Segoe UI", 10, "bold"))
-        style.configure("Accent.TButton", font=("Segoe UI", 10, "bold"))
+        style.configure("Accent.TButton", font=("Segoe UI", 9, "bold"))
         style.configure("Ghost.TButton", font=("Segoe UI", 9))
+        style.configure("TCheckbutton", background="#181822", foreground="#d6d6e6", font=("Segoe UI", 9))
         style.configure("TCombobox", fieldbackground="#11111a", background="#11111a", foreground="#f4f4fa")
 
-        container = ttk.Frame(self.root, style="Root.TFrame", padding=18)
+        container = ttk.Frame(self.root, style="Root.TFrame", padding=14)
         container.pack(fill="both", expand=True)
 
         ttk.Label(container, text="Pin Factory Desktop", style="Heading.TLabel").pack(anchor="w")
@@ -87,24 +88,29 @@ class PinFactoryDesktop:
             container,
             text="Folder-based batch rendering with native pickers, flat image output, shared JSON metadata, and title banks (including niche folders).",
             style="Sub.TLabel",
-        ).pack(anchor="w", pady=(2, 16))
+        ).pack(anchor="w", pady=(2, 10))
 
-        self._make_paths_card(container)
-        self._make_settings_card(container)
+        top_row = ttk.Frame(container, style="Root.TFrame")
+        top_row.pack(fill="x", pady=(0, 10))
+        top_row.columnconfigure(0, weight=3)
+        top_row.columnconfigure(1, weight=2)
+
+        self._make_paths_card(top_row).grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        self._make_settings_card(top_row).grid(row=0, column=1, sticky="nsew")
         self._make_actions(container)
         self._make_log_card(container)
 
     def _make_paths_card(self, parent):
         card = ttk.Frame(parent, style="Card.TFrame", padding=16)
-        card.pack(fill="x", pady=(0, 14))
         ttk.Label(card, text="Input Paths", style="CardTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 12))
-
-        self._path_row(card, 1, "Images Folder", self.images_dir, self.pick_images_folder)
-        self._path_row(card, 2, "Titles .txt", self.titles_file, self.pick_titles_file)
-        self._path_row(card, 3, "Image List .txt", self.image_list_file, self.pick_image_list_file)
-        self._path_row(card, 4, "Output Folder", self.output_dir, self.pick_output_folder)
-
+        card.columnconfigure(0, weight=1)
         card.columnconfigure(1, weight=1)
+
+        self._compact_path_block(card, 1, 0, "Images Folder", self.images_dir, self.pick_images_folder)
+        self._compact_path_block(card, 1, 1, "Titles .txt", self.titles_file, self.pick_titles_file)
+        self._compact_path_block(card, 2, 0, "Image List .txt", self.image_list_file, self.pick_image_list_file)
+        self._compact_path_block(card, 2, 1, "Output Folder", self.output_dir, self.pick_output_folder)
+        return card
 
     def _path_row(self, parent, row, label, variable, command):
         ttk.Label(parent, text=label, style="Body.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 10), pady=7)
@@ -123,9 +129,28 @@ class PinFactoryDesktop:
         entry.grid(row=row, column=1, sticky="ew", pady=7, ipady=6)
         ttk.Button(parent, text="Browse", command=command, style="Ghost.TButton").grid(row=row, column=2, padx=(10, 0), pady=7)
 
+    def _compact_path_block(self, parent, row, col, label, variable, command):
+        block = ttk.Frame(parent, style="Card.TFrame")
+        block.grid(row=row, column=col, sticky="ew", padx=(0, 10) if col == 0 else (10, 0), pady=4)
+        block.columnconfigure(0, weight=1)
+        ttk.Label(block, text=label, style="Body.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        entry = tk.Entry(
+            block,
+            textvariable=variable,
+            bg="#11111a",
+            fg="#f4f4fa",
+            insertbackground="#f4f4fa",
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground="#29293a",
+            highlightcolor="#6f62ff",
+            font=("Segoe UI", 9),
+        )
+        entry.grid(row=1, column=0, sticky="ew", ipady=5)
+        ttk.Button(block, text="Browse", command=command, style="Ghost.TButton").grid(row=1, column=1, padx=(8, 0))
+
     def _make_settings_card(self, parent):
         card = ttk.Frame(parent, style="Card.TFrame", padding=16)
-        card.pack(fill="x", pady=(0, 14))
         ttk.Label(card, text="Render Settings", style="CardTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 12), columnspan=4)
 
         self._field(card, 1, 0, "Template", ttk.Combobox(card, textvariable=self.template_mode, values=[
@@ -160,10 +185,11 @@ class PinFactoryDesktop:
 
         for col in (1, 3):
             card.columnconfigure(col, weight=1)
+        return card
 
     def _field(self, parent, row, col, label, widget):
-        ttk.Label(parent, text=label, style="Body.TLabel").grid(row=row, column=col, sticky="w", padx=(0, 10), pady=7)
-        widget.grid(row=row, column=col + 1, sticky="ew", pady=7)
+        ttk.Label(parent, text=label, style="Body.TLabel").grid(row=row, column=col, sticky="w", padx=(0, 8), pady=5)
+        widget.grid(row=row, column=col + 1, sticky="ew", pady=5)
 
     def _entry(self, parent, variable):
         return tk.Entry(
@@ -176,20 +202,20 @@ class PinFactoryDesktop:
             highlightthickness=1,
             highlightbackground="#29293a",
             highlightcolor="#6f62ff",
-            font=("Segoe UI", 10),
+            font=("Segoe UI", 9),
         )
 
     def _make_actions(self, parent):
         row = ttk.Frame(parent, style="Root.TFrame")
-        row.pack(fill="x", pady=(0, 12))
+        row.pack(fill="x", pady=(0, 8))
 
         ttk.Button(row, text="Start Batch Render", command=self.start_render, style="Accent.TButton").pack(side="left")
-        ttk.Button(row, text="Stop", command=self.stop_render, style="Ghost.TButton").pack(side="left", padx=(10, 0))
-        ttk.Button(row, text="Open Output Folder", command=self.open_output_folder, style="Ghost.TButton").pack(side="left", padx=(10, 0))
+        ttk.Button(row, text="Stop", command=self.stop_render, style="Ghost.TButton").pack(side="left", padx=(8, 0))
+        ttk.Button(row, text="Open Output Folder", command=self.open_output_folder, style="Ghost.TButton").pack(side="left", padx=(8, 0))
         ttk.Label(row, textvariable=self.status_text, style="Status.TLabel").pack(side="right")
 
         self.progress = ttk.Progressbar(parent, mode="indeterminate")
-        self.progress.pack(fill="x", pady=(0, 14))
+        self.progress.pack(fill="x", pady=(0, 10))
 
     def _make_log_card(self, parent):
         card = ttk.Frame(parent, style="Card.TFrame", padding=16)
