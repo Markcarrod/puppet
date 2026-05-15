@@ -501,9 +501,13 @@ async function loadItemsFromArgs(args, shard = null) {
   }
 
   if (args.folder) {
-    console.log(args.imageList
-      ? `Loading title/image manifests for folder: ${args.folder}`
-      : `Scanning folder: ${args.folder}`);
+    if (args.imageList) {
+      console.log(`Loading title bank: ${args.titles}`);
+      console.log(`Loading image list: ${args.imageList}`);
+      console.log(`Using folder only as base path for relative image-list entries: ${args.folder}`);
+    } else {
+      console.log(`Scanning folder: ${args.folder}`);
+    }
     return loadFolderItems(args.folder, args.titles, args.imageList, shard);
   }
 
