@@ -615,7 +615,12 @@ async function loadFolderItems(folderPath, titlesFilePath, imageListPath, shard 
 
   if (imageListPath) {
     const absImageList = path.isAbsolute(imageListPath) ? imageListPath : path.join(ROOT, imageListPath);
-    return buildImageListItems(absFolder, titles, await loadImageListItems(absFolder, absImageList, shard));
+    const isNichePool = titles.some(title => title.format === 'niche_bank');
+    return buildImageListItems(
+      absFolder,
+      titles,
+      await loadImageListItems(absFolder, absImageList, isNichePool ? null : shard)
+    );
   }
 
   if (titles.some(title => title.format === 'niche_bank')) {
@@ -704,6 +709,28 @@ async function loadImageListItems(absFolder, filePath, shard = null) {
 }
 
 function buildImageListItems(absFolder, titles, images) {
+  if (titles.some(title => title.format === 'niche_bank')) {
+    const imageIndex = buildImageListIndex(images);
+    return titles
+      .map((title, index) => {
+        const sourceIndex = title.sourceIndex ?? index;
+        const nicheImages = getNicheImages(imageIndex, title.niche);
+        const imagePath = selectNicheImage(nicheImages, title.imageKey, sourceIndex);
+        if (!imagePath) return null;
+
+        return {
+          imagePath,
+          title: title.title,
+          subtitle: title.subtitle,
+          category: title.category,
+          outputCode: title.outputCode,
+          outputSubfolder: title.outputSubfolder,
+          sequenceNumber: sourceIndex,
+        };
+      })
+      .filter(Boolean);
+  }
+
   const imageBySourceIndex = new Map(images.map(image => [image.sourceIndex, image]));
 
   if (titles.length > 0 && titles[0].sourceIndex !== undefined) {
@@ -740,6 +767,27 @@ function buildImageListItems(absFolder, titles, images) {
 function resolveImageListPath(absFolder, value) {
   const normalized = String(value).trim().replace(/^"|"$/g, '');
   return path.isAbsolute(normalized) ? normalized : path.join(absFolder, normalized);
+}
+
+function buildImageListIndex(images) {
+  const index = new Map();
+
+  for (const image of images) {
+    const imagePath = image.imagePath;
+    const niche = path.basename(path.dirname(imagePath));
+    if (!niche) continue;
+
+    for (const key of [niche, niche.toLowerCase()]) {
+      if (!index.has(key)) index.set(key, []);
+      index.get(key).push(imagePath);
+    }
+  }
+
+  for (const values of index.values()) {
+    values.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+  }
+
+  return index;
 }
 
 async function countTitleBankLines(filePath) {
