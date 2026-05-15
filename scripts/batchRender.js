@@ -10,6 +10,7 @@
  * Options:
  *   --input       Path to JSON or CSV batch file
  *   --folder      Path to folder of images
+ *   --image-list  Optional .txt file with one image path per title line
  *   --titles      Path to .txt file (plain titles, Title:code, or subniche:niche|subniche:title:description|slug:imageId)
  *   --template    Template ID or "auto" (default: auto)
  *   --size        Pin size: standard|tall|square_ish|square (default: standard)
@@ -18,6 +19,7 @@
  *   --variants    Variants per image (default: 4)
  *   --concurrency Worker process count (default: 3)
  *   --output      Output directory (default: output/)
+ *   --resume      Skip outputs that already exist
  */
 
 const path = require('path');
@@ -212,6 +214,7 @@ async function runBatch(items, runtime, hooks = {}) {
     outputFormat,
     outputQuality,
     outputDir,
+    resume,
   } = runtime;
   const onProgress = hooks.onProgress || (() => {});
   const onSnapshot = hooks.onSnapshot || (() => {});
@@ -226,6 +229,27 @@ async function runBatch(items, runtime, hooks = {}) {
 
   async function processItem(item) {
     const { imagePath, title, subtitle, cta, badge, linkLabel, category, outputCode, outputSubfolder, sequenceNumber } = item;
+    const safeOutputSubfolder = sanitizeOutputSubfolder(outputSubfolder);
+    const imageOutputDir = safeOutputSubfolder ? path.join(outputDir, safeOutputSubfolder) : outputDir;
+    const jsonDir = safeOutputSubfolder
+      ? path.join(outputDir, 'json', safeOutputSubfolder)
+      : path.join(outputDir, 'json');
+
+    if (resume && outputCode) {
+      const existingOutputPath = path.join(imageOutputDir, `${outputCode}.${outputFormat}`);
+      if (fs.existsSync(existingOutputPath)) {
+        skipped++;
+        producedAnyOutput = true;
+        onProgress({
+          analyzedDelta: 0,
+          renderedDelta: 0,
+          failedDelta: 0,
+          skippedDelta: 1,
+          extra: `exists - ${path.basename(existingOutputPath)}`,
+        });
+        return;
+      }
+    }
 
     if (!fs.existsSync(imagePath)) {
       skipped++;
@@ -276,11 +300,6 @@ async function runBatch(items, runtime, hooks = {}) {
     }
 
     const baseName = path.parse(imagePath).name;
-    const safeOutputSubfolder = sanitizeOutputSubfolder(outputSubfolder);
-    const imageOutputDir = safeOutputSubfolder ? path.join(outputDir, safeOutputSubfolder) : outputDir;
-    const jsonDir = safeOutputSubfolder
-      ? path.join(outputDir, 'json', safeOutputSubfolder)
-      : path.join(outputDir, 'json');
     const selectedVariants = applyTemplateRotation(variants, templateMode, lastTemplateId);
     const sequenceSuffix = Number.isInteger(sequenceNumber)
       ? `_${String(sequenceNumber + 1).padStart(6, '0')}`
@@ -294,16 +313,31 @@ async function runBatch(items, runtime, hooks = {}) {
       const metaFilename = outputCode
         ? `${outputCode}.json`
         : `${baseName}${sequenceSuffix}_${recipe.templateId}_${slugify(recipe.variantId)}.json`;
+      const outputPath = path.join(imageOutputDir, exactFilename);
+      const metaOutputPath = path.join(jsonDir, metaFilename);
+
+      if (resume && fs.existsSync(outputPath)) {
+        skipped++;
+        producedAnyOutput = true;
+        onProgress({
+          analyzedDelta: 0,
+          renderedDelta: 0,
+          failedDelta: 0,
+          skippedDelta: 1,
+          extra: `exists - ${path.basename(outputPath)}`,
+        });
+        continue;
+      }
 
       try {
         const result = await renderPin(
           recipe,
           imagePath,
-          path.join(imageOutputDir, exactFilename),
+          outputPath,
           {
             format: outputFormat,
             quality: outputQuality,
-            metaOutputPath: path.join(jsonDir, metaFilename),
+            metaOutputPath,
           }
         );
         rendered++;
@@ -453,6 +487,7 @@ function buildRuntimeOptions(args) {
     outputDir: args.output
       ? (path.isAbsolute(args.output) ? args.output : path.join(ROOT, args.output))
       : path.join(ROOT, 'output'),
+    resume: Boolean(args.resume),
   };
 }
 
@@ -466,8 +501,10 @@ async function loadItemsFromArgs(args, shard = null) {
   }
 
   if (args.folder) {
-    console.log(`Scanning folder: ${args.folder}`);
-    return loadFolderItems(args.folder, args.titles, shard);
+    console.log(args.imageList
+      ? `Loading title/image manifests for folder: ${args.folder}`
+      : `Scanning folder: ${args.folder}`);
+    return loadFolderItems(args.folder, args.titles, args.imageList, shard);
   }
 
   console.error('Provide --input <file> or --folder <dir>');
@@ -488,6 +525,11 @@ async function countItemsFromArgs(args) {
       console.log(`Counting title bank: ${absTitle}`);
       return countTitleBankLines(absTitle);
     }
+    if (args.imageList) {
+      const absImageList = path.isAbsolute(args.imageList) ? args.imageList : path.join(ROOT, args.imageList);
+      console.log(`Counting image list: ${absImageList}`);
+      return countTitleBankLines(absImageList);
+    }
     return listImages(absFolder).length;
   }
 
@@ -500,6 +542,7 @@ function buildWorkerArgs(args, workerIndex, workerCount) {
   const passThroughKeys = [
     'input',
     'folder',
+    'imageList',
     'titles',
     'template',
     'size',
@@ -507,6 +550,7 @@ function buildWorkerArgs(args, workerIndex, workerCount) {
     'quality',
     'variants',
     'output',
+    'resume',
   ];
 
   for (const key of passThroughKeys) {
@@ -560,13 +604,18 @@ function makeEmptySummary() {
   };
 }
 
-async function loadFolderItems(folderPath, titlesFilePath, shard = null) {
+async function loadFolderItems(folderPath, titlesFilePath, imageListPath, shard = null) {
   const absFolder = path.isAbsolute(folderPath) ? folderPath : path.join(ROOT, folderPath);
 
   let titles = [{ title: 'Untitled Pin', outputCode: null }];
   if (titlesFilePath) {
     const absTitle = path.isAbsolute(titlesFilePath) ? titlesFilePath : path.join(ROOT, titlesFilePath);
     titles = await loadTitleBankItems(absTitle, shard);
+  }
+
+  if (imageListPath) {
+    const absImageList = path.isAbsolute(imageListPath) ? imageListPath : path.join(ROOT, imageListPath);
+    return buildImageListItems(absFolder, titles, await loadImageListItems(absFolder, absImageList, shard));
   }
 
   if (titles.some(title => title.format === 'niche_bank')) {
@@ -627,6 +676,70 @@ async function loadTitleBankItems(filePath, shard = null) {
   }
 
   return items.length > 0 ? items : [{ title: 'Untitled Pin', outputCode: null }];
+}
+
+async function loadImageListItems(absFolder, filePath, shard = null) {
+  const items = [];
+  let lineIndex = 0;
+  const reader = readline.createInterface({
+    input: fs.createReadStream(filePath, { encoding: 'utf8' }),
+    crlfDelay: Infinity,
+  });
+
+  for await (const rawLine of reader) {
+    const line = rawLine.trim();
+    if (!line) {
+      lineIndex++;
+      continue;
+    }
+    const sourceIndex = lineIndex++;
+    if (shard && sourceIndex % shard.workerCount !== shard.workerIndex) continue;
+    items.push({
+      imagePath: resolveImageListPath(absFolder, line),
+      sourceIndex,
+    });
+  }
+
+  return items;
+}
+
+function buildImageListItems(absFolder, titles, images) {
+  const imageBySourceIndex = new Map(images.map(image => [image.sourceIndex, image]));
+
+  if (titles.length > 0 && titles[0].sourceIndex !== undefined) {
+    return titles
+      .map((title, index) => {
+        const sourceIndex = title.sourceIndex ?? index;
+        const image = imageBySourceIndex.get(sourceIndex) || images[index % Math.max(1, images.length)];
+        if (!image) return null;
+
+        return {
+          imagePath: image.imagePath,
+          title: title.title,
+          subtitle: title.subtitle,
+          category: title.category,
+          outputCode: title.outputCode,
+          outputSubfolder: title.outputSubfolder,
+          sequenceNumber: sourceIndex,
+        };
+      })
+      .filter(Boolean);
+  }
+
+  return images.map((image, index) => ({
+    imagePath: image.imagePath,
+    title: titles[index % titles.length].title,
+    subtitle: titles[index % titles.length].subtitle,
+    category: titles[index % titles.length].category,
+    outputCode: titles[index % titles.length].outputCode,
+    outputSubfolder: titles[index % titles.length].outputSubfolder,
+    sequenceNumber: image.sourceIndex,
+  }));
+}
+
+function resolveImageListPath(absFolder, value) {
+  const normalized = String(value).trim().replace(/^"|"$/g, '');
+  return path.isAbsolute(normalized) ? normalized : path.join(absFolder, normalized);
 }
 
 async function countTitleBankLines(filePath) {

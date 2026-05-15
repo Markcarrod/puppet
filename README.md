@@ -109,6 +109,9 @@ node scripts/batchRender.js --input data/batch.csv --template lower_third_card
 # From a folder of images + title bank
 node scripts/batchRender.js --folder uploads/ --titles data/titles.txt --variants 4
 
+# From a title bank + one image path per line, with restart-safe skipping
+node scripts/batchRender.js --folder C:/Users/Administrator/Desktop/Pinsimag --titles C:/Users/Administrator/Videos/Subgoodsss.txt --image-list C:/Users/Administrator/Videos/image-paths.txt --resume --variants 1
+
 # Full options
 node scripts/batchRender.js \
   --input data/batch.json \
@@ -126,6 +129,8 @@ For title-bank text files, use one of these formats:
 - `title:code` to save the image as `output/code.ext`
 - `title` to render without a custom output code
 - `subniche:niche|subniche:title:description|slug:imageId` to select `folder/niche/imageId.*`, place the output in `output/niche/subniche/slug.ext`, and use `description` as the subtitle. If `imageId` is missing or not found, images in that niche folder rotate from the first image and restart when exhausted.
+Use `--image-list image-paths.txt` for very large jobs when you already have one image path per title line. Paths can be absolute or relative to `--folder`, for example `AI&OnlineIncome/vLckNfWZ.png`.
+Use `--resume` to skip existing output files on restart.
 `--concurrency` now controls real Node worker processes, so higher values can use more CPU cores at the cost of more RAM and more Chromium instances.
 
 ### Batch JSON format

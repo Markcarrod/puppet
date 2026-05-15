@@ -43,6 +43,7 @@ class PinFactoryDesktop:
 
         self.images_dir = tk.StringVar()
         self.titles_file = tk.StringVar()
+        self.image_list_file = tk.StringVar()
         self.output_dir = tk.StringVar(value=str(OUTPUT_DIR))
         self.template_mode = tk.StringVar(value="auto")
         self.pin_size = tk.StringVar(value="standard")
@@ -50,6 +51,7 @@ class PinFactoryDesktop:
         self.quality = tk.StringVar(value="88")
         self.variants = tk.StringVar(value="1")
         self.concurrency = tk.StringVar(value="5")
+        self.resume_existing = tk.BooleanVar(value=True)
         self.status_text = tk.StringVar(value="Ready")
 
         self._load_settings()
@@ -99,7 +101,8 @@ class PinFactoryDesktop:
 
         self._path_row(card, 1, "Images Folder", self.images_dir, self.pick_images_folder)
         self._path_row(card, 2, "Titles .txt", self.titles_file, self.pick_titles_file)
-        self._path_row(card, 3, "Output Folder", self.output_dir, self.pick_output_folder)
+        self._path_row(card, 3, "Image List .txt", self.image_list_file, self.pick_image_list_file)
+        self._path_row(card, 4, "Output Folder", self.output_dir, self.pick_output_folder)
 
         card.columnconfigure(1, weight=1)
 
@@ -144,11 +147,16 @@ class PinFactoryDesktop:
         self._field(card, 2, 2, "Quality", self._entry(card, self.quality))
         self._field(card, 3, 0, "Variants", self._entry(card, self.variants))
         self._field(card, 3, 2, "Workers", self._entry(card, self.concurrency))
+        ttk.Checkbutton(
+            card,
+            text="Resume existing output",
+            variable=self.resume_existing,
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
         ttk.Label(
             card,
             text="Workers control how many Node render processes run in parallel across CPU cores.",
             style="Meta.TLabel",
-        ).grid(row=4, column=0, columnspan=4, sticky="w", pady=(4, 0))
+        ).grid(row=5, column=0, columnspan=4, sticky="w", pady=(4, 0))
 
         for col in (1, 3):
             card.columnconfigure(col, weight=1)
@@ -215,6 +223,12 @@ class PinFactoryDesktop:
             self.titles_file.set(file_path)
             self._save_settings()
 
+    def pick_image_list_file(self):
+        file_path = filedialog.askopenfilename(title="Choose image list file", filetypes=[("Text files", "*.txt")])
+        if file_path:
+            self.image_list_file.set(file_path)
+            self._save_settings()
+
     def pick_output_folder(self):
         folder = filedialog.askdirectory(title="Choose output folder")
         if folder:
@@ -256,6 +270,10 @@ class PinFactoryDesktop:
             "--concurrency", str(concurrency),
             "--output", self.output_dir.get().strip(),
         ]
+        if self.image_list_file.get().strip():
+            cmd.extend(["--image-list", self.image_list_file.get().strip()])
+        if self.resume_existing.get():
+            cmd.append("--resume")
 
         self.log_text.delete("1.0", "end")
         self._append_log("Starting batch render...\n")
@@ -268,6 +286,7 @@ class PinFactoryDesktop:
         write_debug("COMMAND: " + " ".join(cmd))
         write_debug(f"IMAGES_DIR: {self.images_dir.get().strip()}")
         write_debug(f"TITLES_FILE: {self.titles_file.get().strip()}")
+        write_debug(f"IMAGE_LIST_FILE: {self.image_list_file.get().strip()}")
         write_debug(f"OUTPUT_DIR: {self.output_dir.get().strip()}")
         self.status_text.set("Running")
         self.progress.start(10)
@@ -361,6 +380,7 @@ class PinFactoryDesktop:
 
         self.images_dir.set(data.get("images_dir", self.images_dir.get()))
         self.titles_file.set(data.get("titles_file", self.titles_file.get()))
+        self.image_list_file.set(data.get("image_list_file", self.image_list_file.get()))
         self.output_dir.set(data.get("output_dir", self.output_dir.get()))
         self.template_mode.set(data.get("template_mode", self.template_mode.get()))
         self.pin_size.set(data.get("pin_size", self.pin_size.get()))
@@ -368,11 +388,13 @@ class PinFactoryDesktop:
         self.quality.set(data.get("quality", self.quality.get()))
         self.variants.set(data.get("variants", self.variants.get()))
         self.concurrency.set(data.get("concurrency", self.concurrency.get()))
+        self.resume_existing.set(data.get("resume_existing", self.resume_existing.get()))
 
     def _save_settings(self):
         data = {
             "images_dir": self.images_dir.get().strip(),
             "titles_file": self.titles_file.get().strip(),
+            "image_list_file": self.image_list_file.get().strip(),
             "output_dir": self.output_dir.get().strip(),
             "template_mode": self.template_mode.get().strip(),
             "pin_size": self.pin_size.get().strip(),
@@ -380,6 +402,7 @@ class PinFactoryDesktop:
             "quality": self.quality.get().strip(),
             "variants": self.variants.get().strip(),
             "concurrency": self.concurrency.get().strip(),
+            "resume_existing": self.resume_existing.get(),
         }
 
         try:
