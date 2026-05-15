@@ -578,8 +578,8 @@ function buildTemplateStyle(templateId, recipe, textVars, w, h, overlay, accentC
         position: absolute; top: 0; left: 0; right: 0;
         z-index: 10; text-align: center;
         display: flex; flex-direction: column; align-items: center;
-        min-height: 40%;
-        padding: ${Math.round(py * 1.12)}px ${px}px ${Math.round(py * 0.9)}px;
+        min-height: 42%;
+        padding: ${Math.round(py * 1.15)}px ${px}px ${Math.round(py * 0.95)}px;
         background: ${overlayBg};
         backdrop-filter: blur(${overlayBlur}); -webkit-backdrop-filter: blur(${overlayBlur});
         border-bottom: 1px solid rgba(17,17,17,0.08);
