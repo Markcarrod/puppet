@@ -23,6 +23,7 @@
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const readline = require('readline');
 const { fork } = require('child_process');
 const { parseArgs } = require('./utils/cliArgs');
 const { loadBatchItems } = require('../utils/csvImporter');
@@ -530,17 +531,13 @@ function makeEmptySummary() {
   };
 }
 
-function loadFolderItems(folderPath, titlesFilePath) {
+async function loadFolderItems(folderPath, titlesFilePath) {
   const absFolder = path.isAbsolute(folderPath) ? folderPath : path.join(ROOT, folderPath);
 
   let titles = [{ title: 'Untitled Pin', outputCode: null }];
   if (titlesFilePath) {
     const absTitle = path.isAbsolute(titlesFilePath) ? titlesFilePath : path.join(ROOT, titlesFilePath);
-    titles = fs.readFileSync(absTitle, 'utf8')
-      .split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(Boolean)
-      .map(parseTitleBankLine);
+    titles = await loadTitleBankItems(absTitle);
   }
 
   if (titles.some(title => title.format === 'niche_bank')) {
@@ -562,6 +559,22 @@ function loadFolderItems(folderPath, titlesFilePath) {
     outputSubfolder: titles[index % titles.length].outputSubfolder,
     sequenceNumber: index,
   }));
+}
+
+async function loadTitleBankItems(filePath) {
+  const items = [];
+  const reader = readline.createInterface({
+    input: fs.createReadStream(filePath, { encoding: 'utf8' }),
+    crlfDelay: Infinity,
+  });
+
+  for await (const rawLine of reader) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    items.push(parseTitleBankLine(line));
+  }
+
+  return items.length > 0 ? items : [{ title: 'Untitled Pin', outputCode: null }];
 }
 
 function parseTitleBankLine(line) {
