@@ -16,6 +16,7 @@ const { TEMPLATE_FAMILIES, PIN_SIZES } = require('../configs/templates');
 const { buildPinHTML }       = require('../templates/htmlBuilder');
 const { getBrowser, closeBrowser } = require('../utils/renderer');
 const { generateVariants }   = require('../utils/variantGenerator');
+const { applyCtaPolicy }     = require('../utils/ctaEngine');
 
 const ROOT      = path.join(__dirname, '..');
 const PREV_DIR  = path.join(ROOT, 'previews');
@@ -85,7 +86,7 @@ async function main() {
     title:    'Premium Pinterest Pin Title Here',
     subtitle: 'A short supporting line that adds context',
     category: 'LIFESTYLE',
-    cta:      'Save This',
+    cta:      '',
     badge:    'NEW',
   };
 
@@ -112,7 +113,7 @@ async function main() {
       templateId:   tmpl.id,
       templateName: tmpl.name,
       size,
-      inputs:       mockInputs,
+      inputs:       applyCtaPolicy(mockInputs, `preview_${tmpl.id}_${i}`),
       layout: {
         textPosition:    tmpl.textPosition,
         textAlign:       tmpl.textAlign,
@@ -132,7 +133,13 @@ async function main() {
         columnWidth:     tmpl.columnWidth,
         panelWidth:      tmpl.panelWidth,
         panelRadius:     tmpl.panelRadius,
+        sideWidth:       tmpl.sideWidth,
+        contentStyle:    tmpl.contentStyle,
+        accentColor:     tmpl.accentColor,
         fontPreset:      tmpl.fontPreset,
+        coverLiftPx:     tmpl.coverLiftPx,
+        lineHeightBoost: tmpl.lineHeightBoost,
+        titleScale:      tmpl.titleScale,
       },
       overlay: resolveOverlayForTemplate(tmpl),
       font:    require('../configs/templates').FONT_PRESETS[tmpl.fontPreset] || require('../configs/templates').FONT_PRESETS.manrope_inter,

@@ -136,7 +136,7 @@ For title-bank text files, use one of these formats:
     "title": "Your Pin Title Here",
     "subtitle": "Optional supporting text",
     "category": "LIFESTYLE",
-    "cta": "Read More",
+    "cta": "Save This",
     "badge": "NEW",
     "linkLabel": "yourblog.com"
   }
@@ -147,7 +147,7 @@ For title-bank text files, use one of these formats:
 
 ```csv
 imagePath,title,subtitle,category,cta,badge,linkLabel
-my-image.jpg,Your Pin Title,Supporting text,LIFESTYLE,Read More,NEW,yourblog.com
+my-image.jpg,Your Pin Title,Supporting text,LIFESTYLE,Save This,NEW,yourblog.com
 ```
 
 ---

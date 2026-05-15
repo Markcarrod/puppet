@@ -6,6 +6,7 @@
 
 const { TEMPLATE_FAMILIES, FONT_PRESETS, OVERLAY_TYPES, PIN_SIZES } = require('../configs/templates');
 const { scoreTemplates } = require('./imageAnalyzer');
+const { applyCtaPolicy } = require('./ctaEngine');
 
 const OPACITY_VARIANTS = [0.72, 0.82, 0.90];
 const SPACING_VARIANTS = ['tight', 'normal', 'airy'];
@@ -215,13 +216,14 @@ function buildRecipe(template, inputs, analysis, size, overlayOpacity, spacing, 
   const overlayConfig = resolveOverlay(template, finalOpacity);
 
   const fontPreset = FONT_PRESETS[template.fontPreset] || FONT_PRESETS.manrope_inter;
+  const recipeInputs = applyCtaPolicy(inputs, variantId);
 
   return {
     variantId,
     templateId: template.id,
     templateName: template.name,
     size,
-    inputs: { ...inputs },
+    inputs: recipeInputs,
     layout: {
       textPosition: template.textPosition,
       textAlign: template.textAlign,
