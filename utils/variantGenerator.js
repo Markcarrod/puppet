@@ -38,6 +38,7 @@ const GROUPS = {
 };
 
 const { buildTextVars, qualityCheck } = require('./textEngine');
+const NUMBER_TEMPLATES = new Set(['numbered_list_feature', 'top_number_sheet']);
 
 /**
  * Generate a set of premium variant recipes for one image + title combo.
@@ -54,6 +55,7 @@ function generateVariants(analysis, inputs, options = {}) {
   const size = PIN_SIZES[pinSize] || PIN_SIZES.standard;
   const scoredTemplates = scoreTemplates(analysis, inputs.title, TEMPLATE_FAMILIES);
   let pool = [];
+  const startsWithNumber = hasLeadingNumber(inputs.title);
 
   const candidates = templateMode !== 'auto' 
     ? [{ id: templateMode, score: 100 }] 
@@ -62,6 +64,7 @@ function generateVariants(analysis, inputs, options = {}) {
   candidates.forEach(({ id }) => {
     const tmpl = TEMPLATE_FAMILIES[id];
     if (!tmpl) return;
+    if (NUMBER_TEMPLATES.has(id) && !startsWithNumber) return;
 
     // Generate specific permutations per template
     OPACITY_VARIANTS.forEach(opacity => {
@@ -157,6 +160,7 @@ function selectAutoMix(pool, maxVariants) {
 
 function scorePlacement(recipe, analysis) {
   let score = 0;
+  const startsWithNumber = hasLeadingNumber(recipe.inputs.title);
   const position = recipe.layout.textPosition || 'center';
   const overlayType = recipe.overlay?.type || 'none';
   const zoneCells = getTextZoneGridCells(position);
@@ -180,13 +184,17 @@ function scorePlacement(recipe, analysis) {
   if (recipe.templateId === 'split_hero_editorial' && analysis.hasCleanLeft) score += 14;
   if (recipe.templateId === 'dark_glass_finance' && analysis.isDark) score += 18;
   if (recipe.templateId === 'checklist_card' && recipe.inputs.subtitle) score += 14;
-  if (recipe.templateId === 'numbered_list_feature' && /^\s*\d+/.test(recipe.inputs.title || '')) score += 18;
-  if (recipe.templateId === 'top_number_sheet' && /^\s*\d+/.test(recipe.inputs.title || '')) score += 20;
+  if (recipe.templateId === 'numbered_list_feature' && startsWithNumber) score += 28;
+  if (recipe.templateId === 'top_number_sheet' && startsWithNumber) score += 32;
   if (recipe.templateId === 'bold_statement_poster' && (recipe.inputs.title || '').length < 60) score += 16;
   if (analysis.isLight && recipe.layout.textColor === '#ffffff' && !hasReadableBacking) score -= 24;
   if (analysis.isDark && hasReadableBacking) score += 12;
 
   return score;
+}
+
+function hasLeadingNumber(title) {
+  return /^\s*\d+\b/.test(String(title || ''));
 }
 
 function getTextZoneGridCells(textPosition) {

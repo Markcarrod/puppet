@@ -476,7 +476,7 @@ function buildLayoutHTML(templateId, recipe, textVars, textColor, subColor, font
         const numberedTitle = title
           ? `<div class="pin-title title-block">${textVars.wrappedTitle?.length ? textVars.wrappedTitle.map(line => `<span class="pin-title-line">${esc(line.replace(/^\s*\d+[\).:\-\s]*/, ''))}</span>`).join('') : esc(title)}</div>`
           : titleEl;
-        return `<div class="number-card"><div class="number-mark">${esc(number || '01')}</div><div class="number-content">${categoryEl}${badgeEl}${numberedTitle}${hRule}${subtitleEl}${ctaEl}${linkEl}</div></div>`;
+        return `<div class="number-card"><div class="number-mark">${esc(number || '')}</div><div class="number-content">${categoryEl}${badgeEl}${numberedTitle}${hRule}${subtitleEl}${ctaEl}${linkEl}</div></div>`;
       }
       return `<div class="lower-card"><div class="lower-card-inner">${inner}</div></div>`;
 
