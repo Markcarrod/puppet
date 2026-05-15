@@ -565,12 +565,14 @@ class PinFactoryDesktop:
             return
 
         remaining = max(0, self.title_bank_total - self.last_completed_units)
-        title = f"Run Log - {remaining}"
+        title = "Run Log"
 
         if self.render_ms_samples > 0 and remaining > 0:
             avg_ms = self.render_ms_total / max(1, self.render_ms_samples)
             hours_left = (remaining * avg_ms) / 3600000
-            title = f"{title} - {self._format_hours_left(hours_left)} left"
+            title = f"{title} - {self._format_hours_left(hours_left)} remain"
+        elif remaining > 0:
+            title = f"{title} - calculating..."
 
         self.root.title(title)
         self.log_title_text.set(title)
