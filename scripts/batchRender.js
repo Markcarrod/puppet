@@ -56,24 +56,30 @@ async function main() {
 
 async function runCoordinator(args) {
   const runtime = buildRuntimeOptions(args);
-  const items = await loadItemsFromArgs(args);
 
   console.log('\nPinterest Pin Factory - Batch CLI\n');
 
-  if (items.length === 0) {
+  const totalItems = runtime.concurrency > 1
+    ? await countItemsFromArgs(args)
+    : null;
+  const items = totalItems === null ? await loadItemsFromArgs(args) : null;
+  const itemCount = totalItems ?? items.length;
+
+  if (itemCount === 0) {
     console.error('No items to render');
     process.exit(1);
   }
 
-  const workerCount = Math.max(1, Math.min(runtime.concurrency, items.length));
-  console.log(`Loaded ${items.length} items`);
+  const workerCount = Math.max(1, Math.min(runtime.concurrency, itemCount));
+  console.log(`Loaded ${itemCount} items`);
   console.log(`Template: ${runtime.templateMode} | Size: ${runtime.pinSize} | Format: ${runtime.outputFormat} | Quality: ${runtime.outputQuality}`);
   console.log(`Variants per item: ${runtime.variantCount} | Worker processes: ${workerCount}`);
   console.log(`Mode: analyze -> render immediately | Host CPUs: ${os.cpus().length}\n`);
 
   if (workerCount === 1) {
-    const printer = createProgressPrinter(items.length, runtime.variantCount);
-    const result = await runBatch(items, runtime, {
+    const localItems = items || await loadItemsFromArgs(args);
+    const printer = createProgressPrinter(localItems.length, runtime.variantCount);
+    const result = await runBatch(localItems, runtime, {
       onProgress: printer.onProgress,
       onSnapshot: printer.onSnapshot,
       log: message => console.log(message),
@@ -83,7 +89,7 @@ async function runCoordinator(args) {
     return;
   }
 
-  const result = await runMultiProcessBatch(args, items.length, workerCount, runtime);
+  const result = await runMultiProcessBatch(args, itemCount, workerCount, runtime);
   finalizeCoordinatorRun(result, runtime.outputDir);
 }
 
@@ -91,8 +97,7 @@ async function runWorker(args) {
   const runtime = buildRuntimeOptions(args);
   const workerIndex = Math.max(0, parseInt(args.workerIndex, 10) || 0);
   const workerCount = Math.max(1, parseInt(args.workerCount, 10) || 1);
-  const allItems = await loadItemsFromArgs(args);
-  const items = allItems.filter((_, index) => index % workerCount === workerIndex);
+  const items = await loadItemsFromArgs(args, { workerIndex, workerCount });
 
   if (items.length === 0) {
     sendWorkerMessage({ type: 'done', summary: makeEmptySummary() });
@@ -451,15 +456,39 @@ function buildRuntimeOptions(args) {
   };
 }
 
-async function loadItemsFromArgs(args) {
+async function loadItemsFromArgs(args, shard = null) {
   if (args.input) {
     console.log(`Loading batch file: ${args.input}`);
-    return loadBatchItems(args.input);
+    const items = await loadBatchItems(args.input);
+    return shard
+      ? items.filter((_, index) => index % shard.workerCount === shard.workerIndex)
+      : items;
   }
 
   if (args.folder) {
     console.log(`Scanning folder: ${args.folder}`);
-    return loadFolderItems(args.folder, args.titles);
+    return loadFolderItems(args.folder, args.titles, shard);
+  }
+
+  console.error('Provide --input <file> or --folder <dir>');
+  process.exit(1);
+}
+
+async function countItemsFromArgs(args) {
+  if (args.input) {
+    console.log(`Counting batch file: ${args.input}`);
+    const items = await loadBatchItems(args.input);
+    return items.length;
+  }
+
+  if (args.folder) {
+    const absFolder = path.isAbsolute(args.folder) ? args.folder : path.join(ROOT, args.folder);
+    if (args.titles) {
+      const absTitle = path.isAbsolute(args.titles) ? args.titles : path.join(ROOT, args.titles);
+      console.log(`Counting title bank: ${absTitle}`);
+      return countTitleBankLines(absTitle);
+    }
+    return listImages(absFolder).length;
   }
 
   console.error('Provide --input <file> or --folder <dir>');
@@ -531,13 +560,13 @@ function makeEmptySummary() {
   };
 }
 
-async function loadFolderItems(folderPath, titlesFilePath) {
+async function loadFolderItems(folderPath, titlesFilePath, shard = null) {
   const absFolder = path.isAbsolute(folderPath) ? folderPath : path.join(ROOT, folderPath);
 
   let titles = [{ title: 'Untitled Pin', outputCode: null }];
   if (titlesFilePath) {
     const absTitle = path.isAbsolute(titlesFilePath) ? titlesFilePath : path.join(ROOT, titlesFilePath);
-    titles = await loadTitleBankItems(absTitle);
+    titles = await loadTitleBankItems(absTitle, shard);
   }
 
   if (titles.some(title => title.format === 'niche_bank')) {
@@ -549,9 +578,26 @@ async function loadFolderItems(folderPath, titlesFilePath) {
     return [];
   }
 
-  const itemCount = Math.max(images.length, titles.length);
-  return Array.from({ length: itemCount }, (_, index) => ({
-    imagePath: images[index % images.length],
+  if (titlesFilePath) {
+    return titles.map((title, index) => {
+      const sourceIndex = title.sourceIndex ?? index;
+      return {
+        imagePath: images[sourceIndex % images.length],
+        title: title.title,
+        subtitle: title.subtitle,
+        category: title.category,
+        outputCode: title.outputCode,
+        outputSubfolder: title.outputSubfolder,
+        sequenceNumber: sourceIndex,
+      };
+    });
+  }
+
+  const shardedImages = shard
+    ? images.filter((_, index) => index % shard.workerCount === shard.workerIndex)
+    : images;
+  return shardedImages.map((imagePath, index) => ({
+    imagePath,
     title: titles[index % titles.length].title,
     subtitle: titles[index % titles.length].subtitle,
     category: titles[index % titles.length].category,
@@ -561,8 +607,9 @@ async function loadFolderItems(folderPath, titlesFilePath) {
   }));
 }
 
-async function loadTitleBankItems(filePath) {
+async function loadTitleBankItems(filePath, shard = null) {
   const items = [];
+  let lineIndex = 0;
   const reader = readline.createInterface({
     input: fs.createReadStream(filePath, { encoding: 'utf8' }),
     crlfDelay: Infinity,
@@ -570,11 +617,34 @@ async function loadTitleBankItems(filePath) {
 
   for await (const rawLine of reader) {
     const line = rawLine.trim();
-    if (!line) continue;
-    items.push(parseTitleBankLine(line));
+    if (!line) {
+      lineIndex++;
+      continue;
+    }
+    const sourceIndex = lineIndex++;
+    if (shard && sourceIndex % shard.workerCount !== shard.workerIndex) continue;
+    items.push({ ...parseTitleBankLine(line), sourceIndex });
   }
 
   return items.length > 0 ? items : [{ title: 'Untitled Pin', outputCode: null }];
+}
+
+async function countTitleBankLines(filePath) {
+  let count = 0;
+  const reader = readline.createInterface({
+    input: fs.createReadStream(filePath, { encoding: 'utf8' }),
+    crlfDelay: Infinity,
+  });
+
+  for await (const rawLine of reader) {
+    if (rawLine.trim()) count++;
+    if (count > 0 && count % 100000 === 0) {
+      process.stdout.write(`\rCounting title bank: ${count} lines`);
+    }
+  }
+
+  if (count >= 100000) process.stdout.write('\n');
+  return count;
 }
 
 function parseTitleBankLine(line) {
@@ -645,13 +715,13 @@ function parseNicheBankLine(line) {
 
 function buildNicheBankItems(absFolder, titles) {
   const imageIndex = buildNicheImageIndex(absFolder);
-  const rotationByNiche = new Map();
 
   return titles
     .filter(title => title.format === 'niche_bank')
     .map((title, index) => {
       const images = getNicheImages(imageIndex, title.niche);
-      const imagePath = selectNicheImage(images, title.imageKey, title.niche, rotationByNiche);
+      const sourceIndex = title.sourceIndex ?? index;
+      const imagePath = selectNicheImage(images, title.imageKey, sourceIndex);
 
       return {
         imagePath,
@@ -660,7 +730,7 @@ function buildNicheBankItems(absFolder, titles) {
         category: title.category,
         outputCode: title.outputCode,
         outputSubfolder: title.outputSubfolder,
-        sequenceNumber: index,
+        sequenceNumber: sourceIndex,
       };
     })
     .filter(item => item && item.imagePath);
@@ -686,7 +756,7 @@ function getNicheImages(imageIndex, niche) {
   return imageIndex.get(niche) || imageIndex.get(String(niche).toLowerCase()) || [];
 }
 
-function selectNicheImage(images, imageKey, niche, rotationByNiche) {
+function selectNicheImage(images, imageKey, sourceIndex = 0) {
   if (images.length === 0) return null;
 
   if (imageKey) {
@@ -695,10 +765,7 @@ function selectNicheImage(images, imageKey, niche, rotationByNiche) {
     if (exact) return exact;
   }
 
-  const rotationKey = String(niche).toLowerCase();
-  const nextIndex = rotationByNiche.get(rotationKey) || 0;
-  rotationByNiche.set(rotationKey, nextIndex + 1);
-  return images[nextIndex % images.length];
+  return images[sourceIndex % images.length];
 }
 
 function listImages(folderPath) {
