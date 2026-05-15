@@ -124,6 +124,7 @@ function bestBalancedLines(words, lineCount, targetCharsPerLine, options = {}) {
 
   for (const lines of partitions) {
     const lengths = lines.map(line => line.length);
+    const wordCounts = lines.map(line => line.trim().split(/\s+/).filter(Boolean).length);
     const longest = Math.max(...lengths);
     const shortest = Math.min(...lengths);
     const lastWords = lines.map(line => line.trim().split(/\s+/).pop().toLowerCase());
@@ -136,6 +137,13 @@ function bestBalancedLines(words, lineCount, targetCharsPerLine, options = {}) {
     if (lineCount === 4 && options.preferThreeToFour) score -= 12;
     if (shortest < 9) score += 20;
     if (lines.some(line => line.trim().split(/\s+/).length === 1) && lineCount > 2) score += options.strictTarget ? 12 : 0;
+    if (options.minWordsPerLine) {
+      const internalWordCounts = wordCounts.slice(0, -1);
+      const sparseInternalLines = internalWordCounts.filter(count => count < options.minWordsPerLine).length;
+      const sparseLastLine = wordCounts.at(-1) < Math.max(2, options.minWordsPerLine) ? 1 : 0;
+      score += sparseInternalLines * 28;
+      score += sparseLastLine * 18;
+    }
     if (lengths.some(len => len > target * (options.strictTarget ? 1.28 : 1.75))) score += options.strictTarget ? 30 : 18;
     if (lastWords.some(word => BREAK_STOP_WORDS.has(word))) score += 16;
     if (lines.at(-1).split(/\s+/).length === 1) score += 28;
@@ -168,11 +176,19 @@ function hasBadWrap(lines, options = {}) {
   const lastLine = String(lines[lines.length - 1] || '').trim();
   const smallestWord = lastLine.split(/\s+/).filter(Boolean).reduce((min, word) => Math.min(min, word.length), Infinity);
   const maxLines = options.maxLines || 5;
+  const wordCounts = lines.map(line => line.trim().split(/\s+/).filter(Boolean).length);
   return (
     lines.length > maxLines ||
     lastLine.length <= 3 ||
     smallestWord === 1 ||
-    lines.some(line => line.trim().length <= 1)
+    lines.some(line => line.trim().length <= 1) ||
+    (
+      !!options.minWordsPerLine &&
+      (
+        wordCounts.slice(0, -1).some(count => count < options.minWordsPerLine) ||
+        (wordCounts.length > 1 && wordCounts[wordCounts.length - 1] < Math.max(2, options.minWordsPerLine - 0))
+      )
+    )
   );
 }
 
@@ -208,6 +224,7 @@ function getTitleScaleMode(template) {
   const directScaleTemplates = new Set([
     'upper_third_overlay',
     'top_middle_headline',
+    'top_number_sheet',
     'minimalist_gradient_poster',
     'bold_statement_poster',
   ]);
@@ -222,6 +239,7 @@ function getTitleScaleMode(template) {
       maxLines: 4,
       strictTarget: true,
       preferThreeToFour: true,
+      minWordsPerLine: 2,
     },
   };
 }

@@ -16,6 +16,7 @@ const TEMPLATE_PRIORITY = {
   center_white_sheet: 102,
   checklist_card: 100,
   numbered_list_feature: 98,
+  top_number_sheet: 99,
   floating_soft_panel: 96,
   gradient_editorial: 92,
   upper_third_overlay: 88,
@@ -31,7 +32,7 @@ const TEMPLATE_PRIORITY = {
 };
 
 const GROUPS = {
-  readable: ['lower_third_card', 'center_white_sheet', 'checklist_card', 'numbered_list_feature', 'floating_soft_panel', 'gradient_editorial', 'upper_third_overlay'],
+  readable: ['lower_third_card', 'center_white_sheet', 'checklist_card', 'numbered_list_feature', 'top_number_sheet', 'floating_soft_panel', 'gradient_editorial', 'upper_third_overlay'],
   editorial: ['split_hero_editorial', 'premium_article_cover', 'left_editorial_column', 'top_middle_headline'],
   experimental: ['dark_glass_finance', 'luxury_desk_headline', 'bold_statement_poster', 'soft_magazine', 'minimalist_gradient_poster'],
 };
@@ -180,6 +181,7 @@ function scorePlacement(recipe, analysis) {
   if (recipe.templateId === 'dark_glass_finance' && analysis.isDark) score += 18;
   if (recipe.templateId === 'checklist_card' && recipe.inputs.subtitle) score += 14;
   if (recipe.templateId === 'numbered_list_feature' && /^\s*\d+/.test(recipe.inputs.title || '')) score += 18;
+  if (recipe.templateId === 'top_number_sheet' && /^\s*\d+/.test(recipe.inputs.title || '')) score += 20;
   if (recipe.templateId === 'bold_statement_poster' && (recipe.inputs.title || '').length < 60) score += 16;
   if (analysis.isLight && recipe.layout.textColor === '#ffffff' && !hasReadableBacking) score -= 24;
   if (analysis.isDark && hasReadableBacking) score += 12;

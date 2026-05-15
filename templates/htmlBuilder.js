@@ -470,7 +470,8 @@ function buildLayoutHTML(templateId, recipe, textVars, textColor, subColor, font
 
     case 'lower_third_card':
     case 'numbered_list_feature':
-      if (templateId === 'numbered_list_feature') {
+    case 'top_number_sheet':
+      if (templateId === 'numbered_list_feature' || templateId === 'top_number_sheet') {
         const { number, title } = splitLeadingNumber(inputs.title);
         const numberedTitle = title
           ? `<div class="pin-title title-block">${textVars.wrappedTitle?.length ? textVars.wrappedTitle.map(line => `<span class="pin-title-line">${esc(line.replace(/^\s*\d+[\).:\-\s]*/, ''))}</span>`).join('') : esc(title)}</div>`
@@ -646,6 +647,35 @@ function buildTemplateStyle(templateId, recipe, textVars, w, h, overlay, accentC
         align-items: flex-start;
         text-align: left;
         min-width: 0;
+      }`;
+
+    case 'top_number_sheet':
+      return `
+      .number-card {
+        position: absolute; left: 0; right: 0; top: 0;
+        min-height: ${layout.overlayHeight || '42%'};
+        background: ${overlayBg};
+        backdrop-filter: blur(${overlayBlur}); -webkit-backdrop-filter: blur(${overlayBlur});
+        z-index: 10;
+        display: grid;
+        grid-template-columns: minmax(160px, 0.24fr) 1fr;
+        align-items: center;
+        gap: 28px;
+        padding: ${Math.round(py * 1.05)}px ${px}px;
+        border-bottom: 1px solid rgba(15,23,42,0.08);
+      }
+      .number-mark { font-size: ${Math.max(140, Math.round(textVars.fontSize * 2.0))}px; }
+      .number-content {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        text-align: left;
+        min-width: 0;
+      }
+      .number-content .pin-title,
+      .number-content .pin-subtitle,
+      .number-content .pin-checklist {
+        max-width: min(96%, ${layout.maxTitleWidth});
       }`;
 
     case 'left_editorial_column':
