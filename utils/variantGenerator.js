@@ -20,11 +20,34 @@ const TEMPLATE_PRIORITY = {
   floating_soft_panel: 96,
   gradient_editorial: 92,
   upper_third_overlay: 88,
+  veil_top_left: 87,
+  veil_top_center: 86,
+  corner_light_top_left: 86,
+  corner_light_top_right: 86,
+  veil_center: 84,
   split_hero_editorial: 84,
+  split_hero_right: 83,
+  vertical_strip_left: 82,
+  vertical_strip_right: 82,
   premium_article_cover: 82,
   left_editorial_column: 80,
   top_middle_headline: 82,
+  bold_top_right: 80,
+  bold_middle_left: 80,
+  bold_middle_right: 80,
+  bold_bottom_center: 80,
+  black_veil_top: 79,
+  black_veil_center: 79,
+  corner_dark_bottom_left: 79,
+  corner_dark_bottom_right: 79,
   bold_statement_poster: 78,
+  center_outline_box: 77,
+  top_outline_box: 77,
+  bottom_outline_box: 77,
+  giant_word_center: 76,
+  quote_overlay: 75,
+  left_dark_column: 74,
+  right_dark_column: 74,
   dark_glass_finance: 72,
   luxury_desk_headline: 70,
   soft_magazine: 64,
@@ -32,9 +55,9 @@ const TEMPLATE_PRIORITY = {
 };
 
 const GROUPS = {
-  readable: ['lower_third_card', 'center_white_sheet', 'checklist_card', 'numbered_list_feature', 'top_number_sheet', 'floating_soft_panel', 'gradient_editorial', 'upper_third_overlay'],
-  editorial: ['split_hero_editorial', 'premium_article_cover', 'left_editorial_column', 'top_middle_headline'],
-  experimental: ['dark_glass_finance', 'luxury_desk_headline', 'bold_statement_poster', 'soft_magazine', 'minimalist_gradient_poster'],
+  readable: ['lower_third_card', 'center_white_sheet', 'checklist_card', 'numbered_list_feature', 'top_number_sheet', 'floating_soft_panel', 'gradient_editorial', 'upper_third_overlay', 'veil_top_left', 'veil_top_center', 'veil_center', 'corner_light_top_left', 'corner_light_top_right'],
+  editorial: ['split_hero_editorial', 'split_hero_right', 'premium_article_cover', 'left_editorial_column', 'top_middle_headline', 'vertical_strip_left', 'vertical_strip_right', 'quote_overlay'],
+  experimental: ['dark_glass_finance', 'luxury_desk_headline', 'bold_statement_poster', 'soft_magazine', 'minimalist_gradient_poster', 'bold_top_right', 'bold_middle_left', 'bold_middle_right', 'bold_bottom_center', 'black_veil_top', 'black_veil_center', 'corner_dark_bottom_left', 'corner_dark_bottom_right', 'center_outline_box', 'top_outline_box', 'bottom_outline_box', 'giant_word_center', 'left_dark_column', 'right_dark_column'],
 };
 
 const { buildTextVars, qualityCheck } = require('./textEngine');
@@ -181,7 +204,10 @@ function scorePlacement(recipe, analysis) {
   if (position === 'center' && analysis.centerVariance > 45 && !hasReadableBacking) score -= 24;
   if (position === 'left' && analysis.avoidGridCells?.some(c => c.endsWith('_0'))) score -= 26;
   if (position === 'left' && analysis.hasCleanLeft) score += 16;
+  if (position === 'right' && analysis.avoidGridCells?.some(c => c.endsWith('_2'))) score -= 26;
+  if (position === 'right' && analysis.hasCleanRight) score += 16;
   if (recipe.templateId === 'split_hero_editorial' && analysis.hasCleanLeft) score += 14;
+  if (recipe.templateId === 'split_hero_right' && analysis.hasCleanRight) score += 14;
   if (recipe.templateId === 'dark_glass_finance' && analysis.isDark) score += 18;
   if (recipe.templateId === 'checklist_card' && recipe.inputs.subtitle) score += 14;
   if (recipe.templateId === 'numbered_list_feature' && startsWithNumber) score += 28;
@@ -202,10 +228,16 @@ function getTextZoneGridCells(textPosition) {
     upper: ['0_0', '0_1', '0_2'],
     'upper-center': ['0_1'],
     'upper-left': ['0_0', '0_1'],
+    'upper-right': ['0_1', '0_2'],
     center: ['1_0', '1_1', '1_2'],
+    'middle-left': ['1_0'],
+    'middle-right': ['1_2'],
     lower: ['2_0', '2_1', '2_2'],
     'lower-center': ['2_1'],
+    'lower-left': ['2_0', '2_1'],
+    'lower-right': ['2_1', '2_2'],
     left: ['0_0', '1_0', '2_0'],
+    right: ['0_2', '1_2', '2_2'],
   };
   return map[textPosition] || ['1_1'];
 }
@@ -281,7 +313,7 @@ function resolveOverlay(template, opacity) {
 
   // Apply dynamic opacity to background color
   let bg = ot.bg;
-  if (bg && bg.startsWith('rgba')) {
+  if (bg && bg.startsWith('rgba') && !ot.fixedOpacity) {
     // Replace last alpha value
     bg = bg.replace(/rgba\(([^,]+),([^,]+),([^,]+),[^)]+\)/, `rgba($1,$2,$3,${opacity})`);
   }
@@ -290,7 +322,8 @@ function resolveOverlay(template, opacity) {
     type: ot.type,
     bg,
     blur: ot.blur,
-    opacity,
+    opacity: ot.fixedOpacity ? ot.opacity : opacity,
+    fixedOpacity: ot.fixedOpacity,
   };
 }
 

@@ -24,6 +24,11 @@ const GOOGLE_FONTS_URL = [
   'family=DM+Sans:wght@300;400;500&',
   'family=Cormorant+Garamond:wght@300;400;500;600&',
   'family=Outfit:wght@300;400;600;700;800&',
+  'family=Anton&',
+  'family=Oswald:wght@500;600;700&',
+  'family=Bebas+Neue&',
+  'family=Archivo+Black&',
+  'family=Libre+Baskerville:wght@400;700&',
   'display=swap',
 ].join('');
 
@@ -61,8 +66,8 @@ function buildPinHTML(recipe, imageDataUrl) {
   const useAccent = dominant?.isSaturated;
   const accentColor = layout.accentColor || (useAccent ? dominant.hex : (palette ? palette.accent : (recipe.analysis?.autoTextColor || '#ffffff')));
 
-  const textColor = palette ? palette.text : (recipe.analysis?.autoTextColor || '#ffffff');
-  const subColor  = palette ? palette.sub  : textColor;
+  const textColor = layout.textColor || (palette ? palette.text : (recipe.analysis?.autoTextColor || '#ffffff'));
+  const subColor  = palette ? palette.sub : textColor;
 
   const layoutHTML   = buildLayoutHTML(templateId, recipe, textVars, textColor, subColor, fontObj, overlayConfig, accentColor);
   const templateCSS  = buildTemplateStyle(templateId, recipe, textVars, width, height, overlayConfig, accentColor);
@@ -295,10 +300,10 @@ function resolveOverlay(overlayObj, adaptiveOpacity) {
   if (!overlayObj || overlayObj.type === 'none') return { type: 'none' };
 
   let { type, bg, blur, edge, radius } = overlayObj;
-  const opacity = adaptiveOpacity || overlayObj.opacity || 0.82;
+  const opacity = overlayObj.fixedOpacity ? overlayObj.opacity : (adaptiveOpacity || overlayObj.opacity || 0.82);
 
   // Apply adaptive opacity to rgba backgrounds
-  if (bg && bg.startsWith('rgba')) {
+  if (!overlayObj.fixedOpacity && bg && bg.startsWith('rgba')) {
     bg = bg.replace(/rgba\(([^,]+),([^,]+),([^,]+),[^)]+\)/, `rgba($1,$2,$3,${opacity})`);
   }
 
@@ -487,7 +492,23 @@ function buildLayoutHTML(templateId, recipe, textVars, textColor, subColor, font
 
     case 'left_editorial_column':
     case 'split_hero_editorial':
+    case 'split_hero_right':
+    case 'left_dark_column':
+    case 'right_dark_column':
+    case 'vertical_strip_left':
+    case 'vertical_strip_right':
       return `<div class="editorial-column"><div class="column-inner">${inner}</div></div>`;
+
+    case 'center_outline_box':
+    case 'top_outline_box':
+    case 'bottom_outline_box':
+      return `<div class="outline-box"><div class="outline-inner">${inner}</div></div>`;
+
+    case 'giant_word_center':
+      return `<div class="giant-word"><div class="giant-inner">${inner}</div></div>`;
+
+    case 'quote_overlay':
+      return `<div class="quote-zone"><div class="quote-mark">&ldquo;</div><div class="quote-inner">${inner}</div></div>`;
 
     case 'luxury_desk_headline':
       return `<div class="luxury-panel"><div class="luxury-inner">${inner}</div></div>`;
@@ -596,6 +617,89 @@ function buildTemplateStyle(templateId, recipe, textVars, w, h, overlay, accentC
         width: min(90%, ${layout.maxTitleWidth}); z-index: 10; text-align: center;
         display: flex; flex-direction: column; align-items: center;
       }`;
+
+    case 'veil_top_left':
+      return `
+      .pin-root::after {
+        content: '';
+        position: absolute; inset: 0;
+        background: ${overlayBg};
+        z-index: 3;
+        pointer-events: none;
+      }
+      .text-zone {
+        position: absolute; top: ${py}px; left: ${px}px;
+        width: min(82%, ${layout.maxTitleWidth}); z-index: 10; text-align: left;
+        display: flex; flex-direction: column; align-items: flex-start;
+      }`;
+
+    case 'veil_top_center':
+      return `
+      .pin-root::after {
+        content: '';
+        position: absolute; inset: 0;
+        background: ${overlayBg};
+        z-index: 3;
+        pointer-events: none;
+      }
+      .text-zone {
+        position: absolute; top: ${py}px; left: 50%; transform: translateX(-50%);
+        width: min(86%, ${layout.maxTitleWidth}); z-index: 10; text-align: center;
+        display: flex; flex-direction: column; align-items: center;
+      }`;
+
+    case 'veil_center':
+      return `
+      .pin-root::after {
+        content: '';
+        position: absolute; inset: 0;
+        background: ${overlayBg};
+        z-index: 3;
+        pointer-events: none;
+      }
+      .text-zone {
+        position: absolute; inset: ${py}px ${px}px;
+        z-index: 10; text-align: center;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+      }
+      .text-zone .pin-title,
+      .text-zone .pin-subtitle,
+      .text-zone .pin-checklist {
+        max-width: ${layout.maxTitleWidth};
+      }`;
+
+    case 'bold_top_right':
+    case 'bold_middle_left':
+    case 'bold_middle_right':
+    case 'bold_bottom_center':
+    case 'black_veil_top':
+    case 'black_veil_center':
+    case 'corner_light_top_left':
+    case 'corner_light_top_right':
+    case 'corner_dark_bottom_left':
+    case 'corner_dark_bottom_right': {
+      const placement = buildDirectPlacementCSS(layout.textPosition, px, py, layout.maxTitleWidth);
+      const textAlign = layout.textAlign || 'left';
+      const itemAlign = textAlign === 'right' ? 'flex-end' : textAlign === 'center' ? 'center' : 'flex-start';
+      return `
+      .pin-root::after {
+        content: '';
+        position: absolute; inset: 0;
+        background: ${overlayBg};
+        z-index: 3;
+        pointer-events: none;
+      }
+      .text-zone {
+        ${placement}
+        z-index: 10; text-align: ${textAlign};
+        display: flex; flex-direction: column; align-items: ${itemAlign};
+      }
+      .text-zone .pin-title,
+      .text-zone .pin-subtitle,
+      .text-zone .pin-checklist {
+        max-width: 100%;
+      }`;
+    }
 
     case 'center_white_sheet':
       return `
@@ -715,6 +819,161 @@ function buildTemplateStyle(templateId, recipe, textVars, w, h, overlay, accentC
       .editorial-column .pin-subtitle,
       .editorial-column .pin-checklist {
         max-width: 100%;
+      }`;
+
+    case 'split_hero_right':
+      return `
+      .editorial-column {
+        position: absolute; top: 0; right: 0; bottom: 0; width: ${layout.sideWidth || '58%'};
+        background: ${overlayBg};
+        z-index: 10; display: flex; align-items: center;
+        padding: ${Math.round(py * 1.05)}px ${px}px;
+      }
+      .editorial-column::after {
+        content: '';
+        position: absolute;
+        top: 0; left: -1px; bottom: 0; width: 1px;
+        background: rgba(17,17,17,0.08);
+      }
+      .column-inner {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        width: min(92%, 460px);
+        margin-left: auto;
+      }
+      .editorial-column .pin-title,
+      .editorial-column .pin-subtitle,
+      .editorial-column .pin-checklist {
+        max-width: 100%;
+      }`;
+
+    case 'left_dark_column':
+      return `
+      .editorial-column {
+        position: absolute; top: 0; left: 0; bottom: 0; width: ${layout.columnWidth || '52%'};
+        background: ${overlayBg};
+        z-index: 10; display: flex; align-items: center;
+        padding: ${py}px ${px}px;
+        box-shadow: 12px 0 34px rgba(0,0,0,0.18);
+      }
+      .column-inner { display: flex; flex-direction: column; align-items: flex-start; width: 100%; }
+      .editorial-column .pin-title,
+      .editorial-column .pin-subtitle,
+      .editorial-column .pin-checklist { max-width: 100%; }`;
+
+    case 'right_dark_column':
+      return `
+      .editorial-column {
+        position: absolute; top: 0; right: 0; bottom: 0; width: ${layout.columnWidth || '52%'};
+        background: ${overlayBg};
+        z-index: 10; display: flex; align-items: center;
+        padding: ${py}px ${px}px;
+        box-shadow: -12px 0 34px rgba(0,0,0,0.18);
+      }
+      .column-inner { display: flex; flex-direction: column; align-items: flex-start; width: 100%; }
+      .editorial-column .pin-title,
+      .editorial-column .pin-subtitle,
+      .editorial-column .pin-checklist { max-width: 100%; }`;
+
+    case 'vertical_strip_left':
+      return `
+      .editorial-column {
+        position: absolute; top: 0; left: 0; bottom: 0; width: ${layout.sideWidth || '36%'};
+        background: ${overlayBg};
+        z-index: 10; display: flex; align-items: center;
+        padding: ${py}px ${px}px;
+      }
+      .column-inner { display: flex; flex-direction: column; align-items: flex-start; width: 100%; }
+      .editorial-column .pin-title,
+      .editorial-column .pin-subtitle,
+      .editorial-column .pin-checklist { max-width: 100%; }`;
+
+    case 'vertical_strip_right':
+      return `
+      .editorial-column {
+        position: absolute; top: 0; right: 0; bottom: 0; width: ${layout.sideWidth || '36%'};
+        background: ${overlayBg};
+        z-index: 10; display: flex; align-items: center;
+        padding: ${py}px ${px}px;
+      }
+      .column-inner { display: flex; flex-direction: column; align-items: flex-start; width: 100%; }
+      .editorial-column .pin-title,
+      .editorial-column .pin-subtitle,
+      .editorial-column .pin-checklist { max-width: 100%; }`;
+
+    case 'center_outline_box':
+    case 'top_outline_box':
+    case 'bottom_outline_box': {
+      const justify = templateId === 'top_outline_box' ? 'flex-start' : templateId === 'bottom_outline_box' ? 'flex-end' : 'center';
+      const offset = templateId === 'top_outline_box' || templateId === 'bottom_outline_box' ? `${Math.round(py * 0.55)}px` : '0';
+      return `
+      .outline-box {
+        position: absolute; inset: ${py}px ${px}px; z-index: 10;
+        display: flex; align-items: ${justify}; justify-content: center;
+        padding-top: ${offset}; padding-bottom: ${offset};
+      }
+      .outline-inner {
+        width: min(92%, ${layout.panelWidth || layout.maxTitleWidth});
+        padding: ${Math.round(py * 0.78)}px ${Math.round(px * 0.86)}px;
+        border: 2px solid rgba(255,255,255,0.76);
+        background: ${overlayBg};
+        text-align: center;
+        display: flex; flex-direction: column; align-items: center;
+        box-shadow: 0 18px 58px rgba(0,0,0,0.18);
+      }
+      .outline-box .pin-title,
+      .outline-box .pin-subtitle,
+      .outline-box .pin-checklist { max-width: 100%; }`;
+    }
+
+    case 'giant_word_center':
+      return `
+      .pin-root::after {
+        content: '';
+        position: absolute; inset: 0;
+        background: ${overlayBg};
+        z-index: 3;
+        pointer-events: none;
+      }
+      .giant-word {
+        position: absolute; inset: ${py}px ${px}px; z-index: 10;
+        display: flex; align-items: center; justify-content: center;
+        text-align: center;
+      }
+      .giant-inner {
+        width: ${layout.maxTitleWidth};
+        display: flex; flex-direction: column; align-items: center;
+      }
+      .giant-word .pin-title { text-transform: uppercase; }
+      .giant-word .pin-subtitle { max-width: min(88%, 560px); }`;
+
+    case 'quote_overlay':
+      return `
+      .pin-root::after {
+        content: '';
+        position: absolute; inset: 0;
+        background: ${overlayBg};
+        z-index: 3;
+        pointer-events: none;
+      }
+      .quote-zone {
+        position: absolute; inset: ${py}px ${px}px; z-index: 10;
+        display: flex; align-items: center; justify-content: center;
+        text-align: center;
+      }
+      .quote-mark {
+        position: absolute;
+        top: 8%;
+        font-family: Georgia, serif;
+        font-size: ${Math.round(textVars.fontSize * 2.7)}px;
+        line-height: 1;
+        color: ${accentColor || textColor};
+        opacity: 0.18;
+      }
+      .quote-inner {
+        width: ${layout.maxTitleWidth};
+        display: flex; flex-direction: column; align-items: center;
       }`;
 
     case 'floating_soft_panel':
@@ -875,6 +1134,33 @@ function buildTemplateStyle(templateId, recipe, textVars, w, h, overlay, accentC
 
     default:
       return `.text-zone { position: absolute; top: ${py}px; left: ${px}px; right: ${px}px; z-index: 10; }`;
+  }
+}
+
+function buildDirectPlacementCSS(position, px, py, maxWidth) {
+  const width = `width: min(86%, ${maxWidth});`;
+  const common = `position: absolute; ${width}`;
+
+  switch (position) {
+    case 'upper-right':
+      return `${common} top: ${py}px; right: ${px}px;`;
+    case 'upper-center':
+      return `${common} top: ${py}px; left: 50%; transform: translateX(-50%);`;
+    case 'middle-left':
+      return `${common} top: 50%; left: ${px}px; transform: translateY(-50%);`;
+    case 'middle-right':
+      return `${common} top: 50%; right: ${px}px; transform: translateY(-50%);`;
+    case 'lower-left':
+      return `${common} bottom: ${py}px; left: ${px}px;`;
+    case 'lower-right':
+      return `${common} bottom: ${py}px; right: ${px}px;`;
+    case 'lower-center':
+      return `${common} bottom: ${py}px; left: 50%; transform: translateX(-50%);`;
+    case 'center':
+      return `${common} top: 50%; left: 50%; transform: translate(-50%, -50%);`;
+    case 'upper-left':
+    default:
+      return `${common} top: ${py}px; left: ${px}px;`;
   }
 }
 

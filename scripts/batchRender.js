@@ -250,7 +250,7 @@ async function runBatch(items, runtime, hooks = {}) {
   let failed = 0;
   let skipped = 0;
   let producedAnyOutput = false;
-  let lastTemplateId = null;
+  const templateRotationState = createTemplateRotationState();
 
   async function processItem(item) {
     const { imagePath, title, subtitle, cta, badge, linkLabel, category, outputCode, sequenceNumber } = item;
@@ -312,23 +312,21 @@ async function runBatch(items, runtime, hooks = {}) {
 
     const inputs = { title, subtitle, cta, badge, linkLabel, category };
     let variants = generateVariants(analysis, inputs, {
-      maxVariants: variantCount,
+      maxVariants: templateMode === 'auto' ? Math.max(variantCount, 32) : variantCount,
       templateMode,
       pinSize,
     });
 
-    if (outputCode && variants.length > 1) {
-      variants = [variants[0]];
-    }
-
     const baseName = path.parse(imagePath).name;
-    const selectedVariants = applyTemplateRotation(variants, templateMode, lastTemplateId);
+    let selectedVariants = applyTemplateRotation(variants, templateMode, templateRotationState);
+    selectedVariants = outputCode
+      ? selectedVariants.slice(0, 1)
+      : selectedVariants.slice(0, variantCount);
     const sequenceSuffix = Number.isInteger(sequenceNumber)
       ? `_${String(sequenceNumber + 1).padStart(6, '0')}`
       : '';
 
     for (const recipe of selectedVariants) {
-      lastTemplateId = recipe.templateId;
       const exactFilename = outputCode
         ? `${outputCode}.${outputFormat}`
         : `${baseName}${sequenceSuffix}_${recipe.templateId}_${slugify(recipe.variantId)}.${outputFormat}`;
@@ -466,7 +464,7 @@ function createStreamingBatchRunner(runtime, hooks = {}) {
   let failed = 0;
   let skipped = 0;
   let producedAnyOutput = false;
-  let lastTemplateId = null;
+  const templateRotationState = createTemplateRotationState();
 
   return {
     async processItem(item) {
@@ -505,23 +503,21 @@ function createStreamingBatchRunner(runtime, hooks = {}) {
 
       const inputs = { title, subtitle, cta, badge, linkLabel, category };
       let variants = generateVariants(analysis, inputs, {
-        maxVariants: variantCount,
+        maxVariants: templateMode === 'auto' ? Math.max(variantCount, 32) : variantCount,
         templateMode,
         pinSize,
       });
 
-      if (outputCode && variants.length > 1) {
-        variants = [variants[0]];
-      }
-
       const baseName = path.parse(imagePath).name;
-      const selectedVariants = applyTemplateRotation(variants, templateMode, lastTemplateId);
+      let selectedVariants = applyTemplateRotation(variants, templateMode, templateRotationState);
+      selectedVariants = outputCode
+        ? selectedVariants.slice(0, 1)
+        : selectedVariants.slice(0, variantCount);
       const sequenceSuffix = Number.isInteger(sequenceNumber)
         ? `_${String(sequenceNumber + 1).padStart(6, '0')}`
         : '';
 
       for (const recipe of selectedVariants) {
-        lastTemplateId = recipe.templateId;
         const exactFilename = outputCode
           ? `${outputCode}.${outputFormat}`
           : `${baseName}${sequenceSuffix}_${recipe.templateId}_${slugify(recipe.variantId)}.${outputFormat}`;
@@ -1178,13 +1174,43 @@ function listImages(folderPath) {
     .map(file => path.join(folderPath, file));
 }
 
-function applyTemplateRotation(variants, templateMode, previousTemplateId) {
-  if (templateMode !== 'auto' || variants.length <= 1 || !previousTemplateId) {
+function createTemplateRotationState() {
+  return {
+    previousTemplateId: null,
+    usedTemplateIds: new Set(),
+  };
+}
+
+function applyTemplateRotation(variants, templateMode, rotationState) {
+  if (templateMode !== 'auto' || variants.length <= 1 || !rotationState) {
     return variants;
   }
 
-  const preferredIndex = variants.findIndex(recipe => recipe.templateId !== previousTemplateId);
-  if (preferredIndex <= 0) {
+  const candidateTemplateIds = [...new Set(variants.map(recipe => recipe.templateId))];
+  if (candidateTemplateIds.every(id => rotationState.usedTemplateIds.has(id))) {
+    rotationState.usedTemplateIds.clear();
+  }
+
+  let preferredIndex = variants.findIndex(recipe =>
+    !rotationState.usedTemplateIds.has(recipe.templateId)
+    && recipe.templateId !== rotationState.previousTemplateId
+  );
+
+  if (preferredIndex < 0) {
+    preferredIndex = variants.findIndex(recipe => recipe.templateId !== rotationState.previousTemplateId);
+  }
+
+  if (preferredIndex < 0) {
+    preferredIndex = 0;
+  }
+
+  const selectedTemplateId = variants[preferredIndex]?.templateId;
+  if (selectedTemplateId) {
+    rotationState.previousTemplateId = selectedTemplateId;
+    rotationState.usedTemplateIds.add(selectedTemplateId);
+  }
+
+  if (preferredIndex === 0) {
     return variants;
   }
 

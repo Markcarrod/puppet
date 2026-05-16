@@ -196,7 +196,15 @@ function resolveOverlayForTemplate(tmpl) {
   const { OVERLAY_TYPES } = require('../configs/templates');
   const ot = OVERLAY_TYPES[tmpl.overlay] || OVERLAY_TYPES.none;
   if (ot.type === 'none') return { type: 'none' };
-  return { type: ot.type, bg: ot.bg, blur: ot.blur || '0px', edge: ot.edge || 'soft', radius: ot.radius || '0px', opacity: 0.82 };
+  return {
+    type: ot.type,
+    bg: ot.bg,
+    blur: ot.blur || '0px',
+    edge: ot.edge || 'soft',
+    radius: ot.radius || '0px',
+    opacity: ot.fixedOpacity ? ot.opacity : 0.82,
+    fixedOpacity: ot.fixedOpacity,
+  };
 }
 
 main().catch(err => {

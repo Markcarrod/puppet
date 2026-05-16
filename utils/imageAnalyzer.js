@@ -314,10 +314,16 @@ function getTextZoneGridCells(textPosition) {
     'upper':         ['0_0', '0_1', '0_2'],
     'upper-center':  ['0_1'],
     'upper-left':    ['0_0', '0_1'],
+    'upper-right':   ['0_1', '0_2'],
     'center':        ['1_0', '1_1', '1_2'],
+    'middle-left':   ['1_0'],
+    'middle-right':  ['1_2'],
     'lower':         ['2_0', '2_1', '2_2'],
     'lower-center':  ['2_1'],
+    'lower-left':    ['2_0', '2_1'],
+    'lower-right':   ['2_1', '2_2'],
     'left':          ['0_0', '1_0', '2_0'],
+    'right':         ['0_2', '1_2', '2_2'],
   };
   return map[textPosition] || ['1_1'];
 }
